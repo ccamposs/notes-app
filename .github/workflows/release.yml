@@ -1,0 +1,33 @@
+name: Publicar atualização
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Gerar e publicar instalador Windows
+    runs-on: windows-latest
+
+    steps:
+      - name: Obter código
+        uses: actions/checkout@v4
+
+      - name: Configurar Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Instalar dependências
+        run: npm ci
+
+      - name: Gerar e publicar release
+        run: npm run electron:publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
