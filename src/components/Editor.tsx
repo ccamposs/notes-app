@@ -191,8 +191,8 @@ function buildInlineSegments(beforeText: string, afterText: string): { before: D
     const prefix = before.slice(0, start).join('');
     const suffix = before.slice(beforeEnd + 1).join('');
     return {
-      before: [{ text: prefix, kind: 'same' }, { text: before.slice(start, beforeEnd + 1).join(''), kind: 'removed' }, { text: suffix, kind: 'same' }].filter((segment) => segment.text),
-      after: [{ text: prefix, kind: 'same' }, { text: after.slice(start, afterEnd + 1).join(''), kind: 'added' }, { text: suffix, kind: 'same' }].filter((segment) => segment.text),
+      before: ([{ text: prefix, kind: 'same' as const }, { text: before.slice(start, beforeEnd + 1).join(''), kind: 'removed' as const }, { text: suffix, kind: 'same' as const }] as DiffSegment[]).filter((segment) => segment.text),
+      after: ([{ text: prefix, kind: 'same' as const }, { text: after.slice(start, afterEnd + 1).join(''), kind: 'added' as const }, { text: suffix, kind: 'same' as const }] as DiffSegment[]).filter((segment) => segment.text),
     };
   }
   const matrix = Array.from({ length: before.length + 1 }, () => Array(after.length + 1).fill(0));
