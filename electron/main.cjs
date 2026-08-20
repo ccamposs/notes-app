@@ -97,7 +97,8 @@ autoUpdater.on('update-downloaded', (info) => {
 });
 
 autoUpdater.on('error', (err) => {
-  sendStatusToWindow(`Erro na atualização: ${err.message}`);
+  // Erros de rede ou de release não devem ser exibidos ao usuário
+  console.error('Auto-updater error:', err.message);
 });
 
 function sendStatusToWindow(message) {

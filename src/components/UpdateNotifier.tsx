@@ -57,7 +57,7 @@ export default function UpdateNotifier() {
     );
   }
 
-  if (status && !status.includes('mais recente')) {
+  if (status && !status.includes('mais recente') && !status.toLowerCase().includes('error') && !status.includes('HttpError') && !status.includes('406')) {
     return (
       <div className="update-banner subtle">
         <span>{status}</span>
