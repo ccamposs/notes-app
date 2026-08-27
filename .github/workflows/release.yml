@@ -22,13 +22,17 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
 
       - name: Instalar dependências
         run: npm install
+
+      - name: Remover release existente (se houver)
+        run: gh release delete ${{ github.ref_name }} --yes --cleanup-tag=false
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
 
       - name: Gerar e publicar release
         run: npm run electron:publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
