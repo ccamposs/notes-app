@@ -1,7 +1,7 @@
 {
   "name": "notes-app",
   "private": true,
-  "version": "1.2.0",
+  "version": "1.2.1",
   "type": "module",
   "main": "electron/main.cjs",
   "author": "Caio",
@@ -74,7 +74,8 @@
     "publish": {
       "provider": "github",
       "owner": "ccamposs",
-      "repo": "notes-app"
+      "repo": "notes-app",
+      "releaseType": "release"
     }
   }
 }
