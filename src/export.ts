@@ -53,6 +53,14 @@ export function formatNoteAsMarkdown(note: Note): string {
   let md = `# ${note.title || 'Sem título'}\n\n`;
   let html = note.content;
 
+  // Task lists (must come before generic <li> handling)
+  html = html.replace(/<li[^>]*data-checked="true"[^>]*>(.*?)<\/li>/gi, '- [x] $1\n');
+  html = html.replace(/<li[^>]*data-checked="false"[^>]*>(.*?)<\/li>/gi, '- [ ] $1\n');
+  // Ordered list items
+  html = html.replace(/<ol[^>]*>([\s\S]*?)<\/ol>/gi, (_, inner) => {
+    let index = 0;
+    return inner.replace(/<li[^>]*>(.*?)<\/li>/gi, () => { index++; return `${index}. ${arguments[1] || ''}\n`; });
+  });
   // Convert HTML to Markdown
   html = html.replace(/<h1[^>]*>(.*?)<\/h1>/gi, '# $1\n\n');
   html = html.replace(/<h2[^>]*>(.*?)<\/h2>/gi, '## $1\n\n');
@@ -62,17 +70,31 @@ export function formatNoteAsMarkdown(note: Note): string {
   html = html.replace(/<em>(.*?)<\/em>/gi, '*$1*');
   html = html.replace(/<i>(.*?)<\/i>/gi, '*$1*');
   html = html.replace(/<u>(.*?)<\/u>/gi, '__$1__');
+  html = html.replace(/<s>(.*?)<\/s>/gi, '~~$1~~');
+  html = html.replace(/<del>(.*?)<\/del>/gi, '~~$1~~');
   html = html.replace(/<li[^>]*>(.*?)<\/li>/gi, '- $1\n');
   html = html.replace(/<blockquote[^>]*>(.*?)<\/blockquote>/gi, '> $1\n\n');
   html = html.replace(/<a[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/gi, '[$2]($1)');
+  // Imagens: preserva como Markdown (o alt vira a legenda)
+  html = html.replace(/<img[^>]*alt="([^"]*)"[^>]*src="([^"]*)"[^>]*\/?>/gi, '![$1]($2)');
+  html = html.replace(/<img[^>]*src="([^"]*)"[^>]*alt="([^"]*)"[^>]*\/?>/gi, '![$2]($1)');
+  html = html.replace(/<img[^>]*src="([^"]*)"[^>]*\/?>/gi, '![imagem]($1)');
+  html = html.replace(/<hr\s*\/?>/gi, '\n---\n\n');
+  // Remove list wrappers
+  html = html.replace(/<\/?(?:ul|ol)[^>]*>/gi, '\n');
+  // Line breaks and paragraphs
   html = html.replace(/<br\s*\/?>/gi, '\n');
   html = html.replace(/<\/p>/gi, '\n\n');
   html = html.replace(/<p[^>]*>/gi, '');
+  // Remove remaining tags
   html = html.replace(/<[^>]*>/g, '');
+  // Decode entities
   html = html.replace(/&nbsp;/g, ' ');
   html = html.replace(/&amp;/g, '&');
   html = html.replace(/&lt;/g, '<');
   html = html.replace(/&gt;/g, '>');
+  html = html.replace(/&quot;/g, '"');
+  // Clean up excessive newlines
   html = html.replace(/\n{3,}/g, '\n\n');
 
   md += html.trim();

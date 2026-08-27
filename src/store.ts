@@ -1,5 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import { Note, Notebook, Tag, AppState, NoteVersion, Bookmark, DashboardData, DashboardWidgetId, DashboardWidgetSize, StableLine } from './types';
+import { readState, writeState, readLegacyState, markLegacyMigrated } from './storage';
 
 const STORAGE_KEY = 'notes-app-data';
 const HISTORY_RESET_MARKER_KEY = 'notes-app-history-reset-v2';
@@ -188,11 +189,10 @@ export function normalizeVersionHistory(history: unknown): NoteVersion[] {
   return normalized.slice(-MAX_NOTE_VERSIONS);
 }
 
-export function loadState(): AppState {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
+/** Normaliza e migra um estado bruto vindo do armazenamento. */
+function migrateRawState(parsed: any): AppState {
+  {
+    {
       const shouldResetHistory = !localStorage.getItem(HISTORY_RESET_MARKER_KEY);
       // Migrate notes to ensure all fields exist
       if (parsed.notes) {
@@ -248,31 +248,78 @@ export function loadState(): AppState {
       }
       parsed.dashboard = normalizeDashboard(parsed.dashboard);
       parsed.settings = { ...defaultState.settings, ...(parsed.settings || {}) };
+      // Garantir que notebooks e tags existam como arrays
+      if (!Array.isArray(parsed.notebooks)) parsed.notebooks = [];
+      if (!Array.isArray(parsed.tags)) parsed.tags = [];
+      if (!Array.isArray(parsed.tasks)) parsed.tasks = [];
       const migratedState = { ...defaultState, ...parsed };
-      // Persiste a limpeza de snapshots repetidos e o limite de 100 versões já na abertura.
-      saveState(migratedState);
       if (shouldResetHistory) localStorage.setItem(HISTORY_RESET_MARKER_KEY, '1');
       return migratedState;
     }
+  }
+}
+
+/** Estado inicial usado enquanto os dados são carregados do IndexedDB. */
+export function getInitialState(): AppState {
+  return { ...defaultState };
+}
+
+/** Carrega o estado do IndexedDB, migrando dados antigos do localStorage. */
+export async function loadStateAsync(): Promise<AppState> {
+  try {
+    // 1. Tenta o IndexedDB (armazenamento principal)
+    const stored = await readState<any>();
+    if (stored) return migrateRawState(stored);
+
+    // 2. Migra dados antigos do localStorage, se existirem
+    const legacy = readLegacyState();
+    if (legacy) {
+      const migrated = migrateRawState(legacy);
+      await writeState(serializeState(migrated));
+      markLegacyMigrated();
+      return migrated;
+    }
   } catch (e) {
-    console.error('Failed to load state:', e);
+    console.error('Falha ao carregar o estado:', e);
   }
   return { ...defaultState };
 }
 
-export function saveState(state: AppState): void {
+export class StorageQuotaError extends Error {
+  constructor(public sizeMB: number) {
+    super(`Armazenamento excedido (${sizeMB.toFixed(1)} MB)`);
+    this.name = 'StorageQuotaError';
+  }
+}
+
+function serializeState(state: AppState) {
+  return {
+    notes: state.notes,
+    notebooks: state.notebooks,
+    tags: state.tags,
+    tasks: state.tasks,
+    settings: state.settings,
+    dashboard: state.dashboard,
+    selectedNoteId: state.selectedNoteId,
+    viewMode: state.viewMode,
+    activeNotebookId: state.activeNotebookId,
+    activeTagId: state.activeTagId,
+    searchQuery: state.searchQuery,
+    sidebarCollapsed: state.sidebarCollapsed,
+  };
+}
+
+/** Grava o estado no IndexedDB. */
+export async function saveStateAsync(state: AppState): Promise<void> {
+  await writeState(serializeState(state));
+}
+
+/** Tamanho aproximado dos dados armazenados, em bytes. */
+export function getStateSizeBytes(state: AppState): number {
   try {
-    const toSave = {
-      notes: state.notes,
-      notebooks: state.notebooks,
-      tags: state.tags,
-      tasks: state.tasks,
-      settings: state.settings,
-      dashboard: state.dashboard,
-    };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
-  } catch (e) {
-    console.error('Failed to save state:', e);
+    return new Blob([JSON.stringify(serializeState(state))]).size;
+  } catch {
+    return 0;
   }
 }
 

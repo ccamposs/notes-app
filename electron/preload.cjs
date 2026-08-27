@@ -6,11 +6,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
   restartAndUpdate: () => ipcRenderer.invoke('restart-and-update'),
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
 
+  // File system - backup and export
+  saveFile: (options) => ipcRenderer.invoke('save-file', options),
+  selectFolder: () => ipcRenderer.invoke('select-folder'),
+  saveFilesToFolder: (folder, files) => ipcRenderer.invoke('save-files-to-folder', folder, files),
+  getBackupPath: () => ipcRenderer.invoke('get-backup-path'),
+
   // Listen for update events
   onUpdateStatus: (callback) => {
-    ipcRenderer.on('update-status', (_, message) => callback(message));
+    const listener = (_, message) => callback(message);
+    ipcRenderer.on('update-status', listener);
+    return () => ipcRenderer.removeListener('update-status', listener);
   },
   onUpdateDownloaded: (callback) => {
-    ipcRenderer.on('update-downloaded', (_, version) => callback(version));
+    const listener = (_, version) => callback(version);
+    ipcRenderer.on('update-downloaded', listener);
+    return () => ipcRenderer.removeListener('update-downloaded', listener);
   },
 });

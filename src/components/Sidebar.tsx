@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { AppState, ViewMode } from '../types';
 import {
   FileText,
@@ -19,7 +19,15 @@ import {
   ChevronRight,
   ListTodo,
   Settings,
+  Clock,
 } from 'lucide-react';
+
+interface ContextMenuState {
+  x: number;
+  y: number;
+  type: 'notebook' | 'note';
+  id: string;
+}
 
 interface Props {
   state: AppState;
@@ -37,6 +45,9 @@ interface Props {
   onNavigateForward: () => void;
   canNavigateBack: boolean;
   canNavigateForward: boolean;
+  onDeleteNote: (id: string) => void;
+  onToggleFavorite: (id: string) => void;
+  onDuplicateNote: (id: string) => void;
 }
 
 export default function Sidebar({
@@ -55,6 +66,9 @@ export default function Sidebar({
   onNavigateForward,
   canNavigateBack,
   canNavigateForward,
+  onDeleteNote,
+  onToggleFavorite,
+  onDuplicateNote,
 }: Props) {
   const [showNotebookInput, setShowNotebookInput] = useState(false);
   const [showTagInput, setShowTagInput] = useState(false);
@@ -63,11 +77,48 @@ export default function Sidebar({
   const [editingNotebook, setEditingNotebook] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [expandedNotebooks, setExpandedNotebooks] = useState<Set<string>>(new Set());
+  const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
 
   const activeNotes = state.notes.filter((n) => n.status === 'active');
   const favoriteCount = activeNotes.filter((n) => n.isFavorite).length;
   const archivedCount = state.notes.filter((n) => n.status === 'archived').length;
   const trashCount = state.notes.filter((n) => n.status === 'deleted').length;
+  const recentNotes = [...activeNotes].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()).slice(0, 5);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (contextMenuRef.current && !contextMenuRef.current.contains(e.target as Node)) {
+        setContextMenu(null);
+      }
+    };
+    if (contextMenu) document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [contextMenu]);
+
+  const handleNotebookContextMenu = (e: React.MouseEvent, nbId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenu({ x: e.clientX, y: e.clientY, type: 'notebook', id: nbId });
+  };
+
+  const handleNoteContextMenu = (e: React.MouseEvent, noteId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenu({ x: e.clientX, y: e.clientY, type: 'note', id: noteId });
+  };
+
+  const handleDeleteNotebookConfirm = (nbId: string) => {
+    const nb = state.notebooks.find((n) => n.id === nbId);
+    const noteCount = activeNotes.filter((n) => n.notebookId === nbId).length;
+    const message = noteCount > 0
+      ? `Excluir o caderno "${nb?.name}"?\n\n${noteCount} nota${noteCount > 1 ? 's' : ''} vinculada${noteCount > 1 ? 's' : ''} será${noteCount > 1 ? 'ão' : ''} movida${noteCount > 1 ? 's' : ''} para a lixeira.`
+      : `Excluir o caderno "${nb?.name}"?`;
+    if (confirm(message)) {
+      onDeleteNotebook(nbId);
+    }
+    setContextMenu(null);
+  };
 
   const handleAddNotebook = () => {
     if (notebookName.trim()) {
@@ -168,6 +219,26 @@ export default function Sidebar({
         </div>
 
         <div className="nav-section">
+          <div className="nav-section-title"><Clock size={12} /> Notas Recentes</div>
+          {recentNotes.map((note) => (
+            <div
+              key={note.id}
+              className={`nav-item nav-item-compact ${state.selectedNoteId === note.id ? 'active' : ''}`}
+              onClick={() => onSelectNote(note.id)}
+              onContextMenu={(e) => handleNoteContextMenu(e, note.id)}
+            >
+              <FileText className="nav-item-icon" size={14} />
+              <span>{note.title || 'Sem título'}</span>
+            </div>
+          ))}
+          {recentNotes.length === 0 && (
+            <div className="nav-item nav-item-compact" style={{ opacity: 0.5, cursor: 'default' }}>
+              <span>Nenhuma nota recente</span>
+            </div>
+          )}
+        </div>
+
+        <div className="nav-section">
           <div className="nav-section-title">Cadernos</div>
           {state.notebooks.map((nb) => {
             const isExpanded = expandedNotebooks.has(nb.id);
@@ -177,6 +248,7 @@ export default function Sidebar({
                 <div
                   className={`nav-item ${state.viewMode === 'notebook' && state.activeNotebookId === nb.id ? 'active' : ''}`}
                   onClick={() => onSetView('notebook', nb.id)}
+                  onContextMenu={(e) => handleNotebookContextMenu(e, nb.id)}
                 >
                   <span
                     className="nav-item-chevron-btn"
@@ -200,14 +272,6 @@ export default function Sidebar({
                     <>
                       <span>{nb.name}</span>
                       <span className="nav-item-count">{notebookNotes.length}</span>
-                      <div className="nav-item-actions">
-                        <button className="nav-item-action-btn" onClick={(e) => { e.stopPropagation(); setEditingNotebook(nb.id); setEditName(nb.name); }} aria-label="Renomear">
-                          <Pencil size={12} />
-                        </button>
-                        <button className="nav-item-action-btn" onClick={(e) => { e.stopPropagation(); onDeleteNotebook(nb.id); }} aria-label="Excluir">
-                          <X size={12} />
-                        </button>
-                      </div>
                     </>
                   )}
                 </div>
@@ -218,6 +282,7 @@ export default function Sidebar({
                         key={note.id}
                         className={`notebook-note-item ${state.selectedNoteId === note.id ? 'active' : ''}`}
                         onClick={() => { onSetView('notebook', nb.id); onSelectNote(note.id); }}
+                        onContextMenu={(e) => handleNoteContextMenu(e, note.id)}
                       >
                         {note.isFavorite && <Star size={10} fill="#ffb84d" color="#ffb84d" />}
                         <span>{note.title || 'Sem título'}</span>
@@ -308,6 +373,38 @@ export default function Sidebar({
           <span>Configurações</span>
         </button>
       </div>
+
+      {contextMenu && (
+        <div
+          ref={contextMenuRef}
+          className="sidebar-context-menu"
+          style={{ top: contextMenu.y, left: contextMenu.x }}
+        >
+          {contextMenu.type === 'notebook' && (() => {
+            const nb = state.notebooks.find((n) => n.id === contextMenu.id);
+            return (
+              <>
+                <button onClick={() => { onCreateNote(); setContextMenu(null); }}>Adicionar nova nota</button>
+                <button onClick={() => { setEditingNotebook(contextMenu.id); setEditName(nb?.name || ''); setContextMenu(null); }}>Renomear caderno</button>
+                <div className="sidebar-context-divider" />
+                <button className="danger" onClick={() => handleDeleteNotebookConfirm(contextMenu.id)}>Excluir caderno</button>
+              </>
+            );
+          })()}
+          {contextMenu.type === 'note' && (() => {
+            const note = state.notes.find((n) => n.id === contextMenu.id);
+            return (
+              <>
+                <button onClick={() => { onSelectNote(contextMenu.id); setContextMenu(null); }}>Abrir nota</button>
+                <button onClick={() => { onToggleFavorite(contextMenu.id); setContextMenu(null); }}>{note?.isFavorite ? 'Remover dos favoritos' : 'Adicionar aos favoritos'}</button>
+                <button onClick={() => { onDuplicateNote(contextMenu.id); setContextMenu(null); }}>Duplicar nota</button>
+                <div className="sidebar-context-divider" />
+                <button className="danger" onClick={() => { if (confirm('Mover esta nota para a lixeira?')) onDeleteNote(contextMenu.id); setContextMenu(null); }}>Mover para lixeira</button>
+              </>
+            );
+          })()}
+        </div>
+      )}
     </aside>
   );
 }

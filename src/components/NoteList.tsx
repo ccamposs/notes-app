@@ -23,6 +23,7 @@ interface Props {
   onExportNotes: (noteIds: string[], format: string) => void;
   onAISummary: (id: string) => void;
   onReorderNotes: (noteIds: string[]) => void;
+  onDeleteNotes: (noteIds: string[]) => void;
   commentSearchMatches: Record<string, { threadId: string; text: string }[]>;
   onSelectComment: (noteId: string, threadId: string) => void;
 }
@@ -51,6 +52,7 @@ export default function NoteList({
   onExportNotes,
   onAISummary,
   onReorderNotes,
+  onDeleteNotes,
   commentSearchMatches,
   onSelectComment,
 }: Props) {
@@ -278,6 +280,20 @@ export default function NoteList({
             <span>{selectedIds.size} selecionada{selectedIds.size !== 1 ? 's' : ''}</span>
             <button onClick={selectAll}>Selecionar todas</button>
             <button onClick={() => setSelectedIds(new Set())}>Limpar</button>
+            <button
+              className="multi-select-delete"
+              disabled={selectedIds.size === 0}
+              onClick={() => {
+                if (selectedIds.size === 0) return;
+                if (confirm(`Excluir ${selectedIds.size} nota${selectedIds.size > 1 ? 's' : ''}?`)) {
+                  onDeleteNotes(Array.from(selectedIds));
+                  setSelectedIds(new Set());
+                  setMultiSelectMode(false);
+                }
+              }}
+            >
+              Excluir
+            </button>
             <button onClick={toggleMultiSelect}><X size={12} /></button>
           </div>
         )}

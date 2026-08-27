@@ -7,8 +7,12 @@ declare global {
       checkForUpdates: () => Promise<string>;
       restartAndUpdate: () => Promise<void>;
       getAppVersion: () => Promise<string>;
-      onUpdateStatus: (callback: (message: string) => void) => void;
-      onUpdateDownloaded: (callback: (version: string) => void) => void;
+      saveFile: (options: { content: string; defaultName: string; filters?: { name: string; extensions: string[] }[] }) => Promise<{ success: boolean; filePath?: string }>;
+      selectFolder: () => Promise<string | null>;
+      saveFilesToFolder: (folder: string, files: { path: string; content: string }[]) => Promise<{ success: boolean; count?: number; error?: string }>;
+      getBackupPath: () => Promise<string>;
+      onUpdateStatus: (callback: (message: string) => void) => () => void;
+      onUpdateDownloaded: (callback: (version: string) => void) => () => void;
     };
   }
 }
@@ -22,15 +26,20 @@ export default function UpdateNotifier() {
   useEffect(() => {
     if (!window.electronAPI) return;
 
-    window.electronAPI.onUpdateStatus((message) => {
+    const removeStatusListener = window.electronAPI.onUpdateStatus((message) => {
       setStatus(message);
     });
 
-    window.electronAPI.onUpdateDownloaded((version) => {
+    const removeDownloadedListener = window.electronAPI.onUpdateDownloaded((version) => {
       setUpdateReady(true);
       setNewVersion(version);
       setDismissed(false);
     });
+
+    return () => {
+      removeStatusListener();
+      removeDownloadedListener();
+    };
   }, []);
 
   const handleRestart = () => {

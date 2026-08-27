@@ -4653,3 +4653,237 @@ body {
   color: var(--text-secondary);
   background: transparent;
 }
+
+/* Backup e exportação nas configurações */
+.settings-backup-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.settings-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  transition: border-color .16s, background .16s;
+}
+.settings-action-btn:hover { border-color: var(--accent); background: var(--accent-light); }
+.settings-backup-hint {
+  margin: 10px 0 0;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.settings-export-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px;
+  margin-top: 12px;
+}
+.settings-export-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-primary);
+  background: var(--bg-primary);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color .16s, background .16s, box-shadow .16s;
+}
+.settings-export-btn:hover {
+  border-color: var(--accent);
+  background: var(--accent-light);
+  box-shadow: 0 2px 8px rgba(0,0,0,.08);
+}
+.settings-export-btn strong { font-size: 13px; margin-top: 4px; }
+.settings-export-btn span { color: var(--text-muted); font-size: 10px; line-height: 1.3; }
+.settings-export-status {
+  margin: 10px 0 0;
+  padding: 8px 12px;
+  border-radius: 6px;
+  color: #166534;
+  background: rgba(34, 197, 94, .12);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* Botão de exclusão múltipla */
+.multi-select-delete { color: var(--danger) !important; font-weight: 650; }
+.multi-select-delete:hover { background: rgba(255, 77, 106, .12) !important; }
+.multi-select-delete:disabled { opacity: .4; cursor: not-allowed; }
+
+/* Barra de progresso para importação/exportação */
+.settings-progress-container {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.settings-progress-bar {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--border);
+  overflow: hidden;
+}
+.settings-progress-fill {
+  height: 100%;
+  border-radius: 4px;
+  background: var(--accent);
+  transition: width .3s ease;
+}
+.settings-progress-label {
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+}
+.settings-progress-fill[style*="100%"] {
+  background: #22c55e;
+}
+
+/* Menu de contexto da sidebar */
+.sidebar-context-menu {
+  position: fixed;
+  z-index: 99999;
+  min-width: 180px;
+  padding: 6px 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .28);
+}
+.sidebar-context-menu button {
+  display: block;
+  width: 100%;
+  padding: 8px 14px;
+  border: 0;
+  color: var(--text-primary);
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+  text-align: left;
+}
+.sidebar-context-menu button:hover { background: var(--bg-hover); }
+.sidebar-context-menu button.danger { color: var(--danger); }
+.sidebar-context-menu button.danger:hover { background: rgba(255, 77, 106, .1); }
+.sidebar-context-divider { height: 1px; margin: 4px 0; background: var(--border); }
+
+/* Notas recentes compactas */
+.nav-item-compact { padding: 5px 12px 5px 18px !important; font-size: 11px; }
+.nav-item-compact .nav-item-icon { width: 14px; height: 14px; }
+
+/* Tela de carregamento inicial */
+.app-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  width: 100vw;
+  height: 100vh;
+  background: var(--bg-primary);
+}
+.app-loading p { margin: 0; color: var(--text-secondary); font-size: 13px; }
+.app-loading-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: appLoadingSpin .8s linear infinite;
+}
+@keyframes appLoadingSpin { to { transform: rotate(360deg); } }
+
+/* Estatísticas de armazenamento */
+.storage-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+.storage-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-primary);
+}
+.storage-stat-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: .3px;
+}
+.storage-stat strong { color: var(--text-primary); font-size: 15px; font-weight: 700; }
+.storage-quota { margin-top: 14px; display: flex; flex-direction: column; gap: 6px; }
+.storage-quota-bar {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--border);
+  overflow: hidden;
+}
+.storage-quota-fill {
+  height: 100%;
+  border-radius: 4px;
+  background: var(--accent);
+  transition: width .4s ease, background .3s ease;
+}
+.storage-quota-fill.is-warning { background: #f59e0b; }
+.storage-quota-fill.is-critical { background: var(--danger); }
+.storage-quota-label { color: var(--text-secondary); font-size: 11px; }
+
+/* Imagens dentro das notas */
+.ProseMirror img {
+  max-width: 100%;
+  height: auto;
+  margin: 8px 0;
+  border-radius: 6px;
+  display: block;
+}
+.ProseMirror img.ProseMirror-selectednode {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Sincronização local */
+.sync-status {
+  position: fixed;
+  z-index: 120;
+  right: 18px;
+  bottom: 18px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 11px;
+  border: 1px solid var(--border-color, rgba(148, 163, 184, 0.35));
+  border-radius: 999px;
+  background: var(--bg-secondary, #1e293b);
+  color: var(--text-secondary, #cbd5e1);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.22);
+  font-size: 12px;
+}
+.sync-status.is-synced { color: #22c55e; }
+.sync-status.is-syncing { color: #60a5fa; }
+.sync-status.is-offline {
+  color: #fbbf24;
+  cursor: pointer;
+  font: inherit;
+}
+.sync-status-spinner { animation: sync-status-spin 1s linear infinite; }
+@keyframes sync-status-spin { to { transform: rotate(360deg); } }

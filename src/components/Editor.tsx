@@ -11,6 +11,7 @@ import Color from '@tiptap/extension-color';
 import TextStyle from '@tiptap/extension-text-style';
 import TextAlign from '@tiptap/extension-text-align';
 import Highlight from '@tiptap/extension-highlight';
+import Image from '@tiptap/extension-image';
 import { CollapsibleNode } from '../extensions/CollapsibleNode';
 import { BookmarkMark } from '../extensions/BookmarkMark';
 import { CommentMark } from '../extensions/CommentMark';
@@ -307,6 +308,19 @@ export default function Editor({
     }
     return DEFAULT_FLOATING_TOOLBAR_ITEMS;
   });
+  useEffect(() => {
+    const applyRestoredToolbar = (event: Event) => {
+      const items = (event as CustomEvent<unknown>).detail;
+      if (!Array.isArray(items)) return;
+      const validItems = items.filter((item): item is FloatingToolbarItem => FLOATING_TOOLBAR_ITEMS.some((option) => option.id === item));
+      if (!validItems.length) return;
+      setFloatingToolbarItems(FLOATING_TOOLBAR_ITEMS
+        .map((option) => option.id)
+        .filter((id) => id === 'comment' || validItems.includes(id)));
+    };
+    window.addEventListener('notes-app-floating-toolbar-items-restored', applyRestoredToolbar);
+    return () => window.removeEventListener('notes-app-floating-toolbar-items-restored', applyRestoredToolbar);
+  }, []);
   const [sideTab, setSideTab] = useState<SideTab>('none');
   const [showVersionHistory, setShowVersionHistory] = useState(false);
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
@@ -352,6 +366,7 @@ export default function Editor({
       Color,
       TextAlign.configure({ types: ['heading', 'paragraph', 'blockquote'] }),
       Highlight.configure({ multicolor: true }),
+      Image.configure({ inline: false, allowBase64: true }),
       CollapsibleNode,
       BookmarkMark,
       CommentMark,

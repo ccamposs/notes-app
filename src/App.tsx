@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
 import { AppState, CommentMessage, CommentThread, DashboardData, Note, Task, ViewMode } from './types';
-import { loadState, saveState, createNote, createNotebook, createTag, createVersion, createLineStability, filterNotes, stripHtml, MAX_NOTE_VERSIONS } from './store';
+import { loadStateAsync, saveStateAsync, getInitialState, createNote, createNotebook, createTag, createVersion, createLineStability, filterNotes, stripHtml, MAX_NOTE_VERSIONS } from './store';
+import { requestPersistentStorage } from './storage';
 import { formatNoteAsText, formatNoteAsMarkdown, formatNoteAsHtml, generateDocx, generateAndDownloadPdf, downloadFile, downloadBlob } from './export';
 import { checkTaskReminders } from './notifications';
 import Sidebar from './components/Sidebar';
@@ -21,6 +22,8 @@ import Dashboard from './components/Dashboard';
 import Tasks from './components/Tasks';
 import Settings from './components/Settings';
 import UpdateNotifier from './components/UpdateNotifier';
+import SyncStatus from './components/SyncStatus';
+import { LocalSyncClient, SyncStatus as SyncStatusData } from './sync';
 
 type NavigationEntry = Pick<AppState, 'viewMode' | 'activeNotebookId' | 'activeTagId' | 'selectedNoteId' | 'searchQuery'>;
 type NoteUpdateOptions = { preservePreviousVersion?: boolean };
@@ -44,7 +47,8 @@ function sameNavigationEntry(first: NavigationEntry, second: NavigationEntry): b
 }
 
 export default function App() {
-  const [state, setState] = useState<AppState>(loadState);
+  const [state, setState] = useState<AppState>(getInitialState);
+  const [isLoading, setIsLoading] = useState(true);
   const stateRef = useRef(state);
   stateRef.current = state;
   const navigationStackRef = useRef<NavigationEntry[]>([navigationEntry(state)]);
@@ -53,23 +57,75 @@ export default function App() {
   const [openNoteIds, setOpenNoteIds] = useState<string[]>([]);
   const [focusCommentId, setFocusCommentId] = useState<string | null>(null);
   const saveTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const syncClientRef = useRef<LocalSyncClient | null>(null);
+  const [syncStatus, setSyncStatus] = useState<SyncStatusData>({ phase: 'connecting', pendingChanges: 0, lastSyncedAt: 0 });
   const isRevertingRef = useRef(false);
 
+  // Carrega os dados do IndexedDB na abertura
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const loaded = await loadStateAsync();
+      if (cancelled) return;
+      setState(loaded);
+      stateRef.current = loaded;
+      navigationStackRef.current = [navigationEntry(loaded)];
+      setIsLoading(false);
+      // Pede armazenamento persistente para o navegador não descartar os dados
+      requestPersistentStorage();
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const safeSave = useCallback((s: AppState) => {
+    saveStateAsync(s)
+      .then(() => syncClientRef.current?.saveLocalChange(s))
+      .catch((e) => {
+        console.error('Não foi possível gravar o estado:', e);
+      });
+  }, []);
+
   const persistState = useCallback((newState: AppState) => {
+    stateRef.current = newState;
     setState(newState);
     if (saveTimeout.current) clearTimeout(saveTimeout.current);
-    saveTimeout.current = setTimeout(() => saveState(newState), 300);
-  }, []);
+    saveTimeout.current = setTimeout(() => safeSave(newState), 300);
+  }, [safeSave]);
 
   // Functional persist that uses latest state
   const persistFn = useCallback((updater: (prev: AppState) => AppState) => {
     setState((prev) => {
       const newState = updater(prev);
+      stateRef.current = newState;
       if (saveTimeout.current) clearTimeout(saveTimeout.current);
-      saveTimeout.current = setTimeout(() => saveState(newState), 300);
+      saveTimeout.current = setTimeout(() => safeSave(newState), 300);
       return newState;
     });
-  }, []);
+  }, [safeSave]);
+
+  // O IndexedDB continua sendo o cache offline. Ao receber um snapshot remoto,
+  // ele é salvo diretamente para não gerar uma nova operação de sincronização.
+  useEffect(() => {
+    if (isLoading) return;
+    const client = new LocalSyncClient();
+    syncClientRef.current = client;
+    client.start(
+      stateRef.current,
+      (remoteState) => {
+        stateRef.current = remoteState;
+        setState(remoteState);
+        navigationStackRef.current = [navigationEntry(remoteState)];
+        navigationIndexRef.current = 0;
+        setNavigationControls({ canGoBack: false, canGoForward: false });
+        saveStateAsync(remoteState).catch((error) => console.error('Não foi possível salvar a sincronização local:', error));
+      },
+      setSyncStatus,
+    );
+    return () => {
+      client.stop();
+      if (syncClientRef.current === client) syncClientRef.current = null;
+    };
+  }, [isLoading]);
 
   const updateNavigationControls = useCallback(() => {
     setNavigationControls({
@@ -139,6 +195,20 @@ export default function App() {
     }, 30000);
     return () => clearInterval(interval);
   }, [state.tasks, state.settings, persistFn]);
+
+  // Registro da última gravação bem-sucedida (sem duplicar os dados,
+  // para não consumir o dobro do armazenamento disponível)
+  useEffect(() => {
+    const BACKUP_INTERVAL = 5 * 60 * 1000;
+    const interval = setInterval(() => {
+      try {
+        localStorage.setItem('notes-app-backup-date', new Date().toISOString());
+      } catch (e) {
+        console.error('Falha ao registrar backup:', e);
+      }
+    }, BACKUP_INTERVAL);
+    return () => clearInterval(interval);
+  }, []);
 
   const selectedNote = state.notes.find((n) => n.id === state.selectedNoteId) || null;
   const openNotes = openNoteIds
@@ -321,6 +391,22 @@ export default function App() {
     });
   }, [persistFn]);
 
+  const handleDeleteMultipleNotes = useCallback((noteIds: string[]) => {
+    setOpenNoteIds((openIds) => openIds.filter((id) => !noteIds.includes(id)));
+    persistFn((s) => {
+      const now = new Date().toISOString();
+      return {
+        ...s,
+        notes: s.notes.map((n) => {
+          if (!noteIds.includes(n.id)) return n;
+          if (n.status === 'deleted') return n; // já na lixeira, será excluída permanentemente abaixo
+          return { ...n, status: 'deleted' as const, updatedAt: now };
+        }).filter((n) => !(noteIds.includes(n.id) && n.status === 'deleted' && !noteIds.includes(n.id))),
+        selectedNoteId: noteIds.includes(s.selectedNoteId || '') ? null : s.selectedNoteId,
+      };
+    });
+  }, [persistFn]);
+
   const handleRestoreNote = useCallback((noteId: string) => {
     handleUpdateNote(noteId, { status: 'active' });
   }, [handleUpdateNote]);
@@ -365,6 +451,96 @@ export default function App() {
 
   const handleUpdateSettings = useCallback((updates: Partial<import('./types').AppSettings>) => {
     persistFn((s) => ({ ...s, settings: { ...s.settings, ...updates } }));
+  }, [persistFn]);
+
+  const handleRestoreBackup = useCallback((data: import('./backup').BackupRestoreData) => {
+    if (data.floatingToolbarItems) {
+      try {
+        localStorage.setItem('notes-app-floating-toolbar-items', JSON.stringify(data.floatingToolbarItems));
+        window.dispatchEvent(new CustomEvent('notes-app-floating-toolbar-items-restored', { detail: data.floatingToolbarItems }));
+      } catch (error) {
+        console.error('Não foi possível restaurar a barra flutuante:', error);
+      }
+    }
+
+    persistFn((s) => ({
+      ...s,
+      notes: data.notes || s.notes,
+      notebooks: data.notebooks || s.notebooks,
+      tags: data.tags || s.tags,
+      tasks: data.tasks || s.tasks,
+      settings: data.settings || s.settings,
+      dashboard: data.dashboard || s.dashboard,
+      selectedNoteId: data.selectedNoteId ?? null,
+      viewMode: data.viewMode ?? 'dashboard',
+      activeNotebookId: data.activeNotebookId ?? null,
+      activeTagId: data.activeTagId ?? null,
+      searchQuery: data.searchQuery ?? '',
+      sidebarCollapsed: data.sidebarCollapsed ?? false,
+    }));
+  }, [persistFn]);
+
+  const handleImportNotes = useCallback((importedNotes: import('./backup').ImportedNote[]) => {
+    persistFn((s) => {
+      const now = new Date().toISOString();
+      const genId = () => crypto.randomUUID ? crypto.randomUUID() : `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+      let notebooks = [...s.notebooks];
+      let tags = [...s.tags];
+      const newNotes: Note[] = [];
+
+      for (const imported of importedNotes) {
+        // Resolve notebook
+        let notebookId: string | null = null;
+        if (imported.notebook) {
+          let nb = notebooks.find((n) => n.name.toLowerCase() === imported.notebook!.toLowerCase());
+          if (!nb) {
+            nb = { id: genId(), name: imported.notebook, createdAt: now, order: notebooks.length };
+            notebooks = [...notebooks, nb];
+          }
+          notebookId = nb.id;
+        }
+
+        // Resolve tags
+        const tagIds: string[] = [];
+        for (const tagName of imported.tags) {
+          let tag = tags.find((t) => t.name.toLowerCase() === tagName.toLowerCase());
+          if (!tag) {
+            tag = { id: genId(), name: tagName, color: '#3b82f6' };
+            tags = [...tags, tag];
+          }
+          tagIds.push(tag.id);
+        }
+
+        newNotes.push({
+          id: genId(),
+          title: imported.title,
+          content: imported.content,
+          createdAt: imported.createdAt,
+          updatedAt: imported.updatedAt,
+          status: 'active',
+          isFavorite: imported.isFavorite,
+          notebookId,
+          tags: tagIds,
+          history: [],
+          lineStability: [],
+          bookmarks: [],
+          commentThreads: [],
+        });
+      }
+
+      const newState = {
+        ...s,
+        notes: [...newNotes, ...s.notes],
+        notebooks,
+        tags,
+      };
+      // Grava imediatamente no IndexedDB para não perder na recarga
+      saveStateAsync(newState).catch((e) => {
+        console.error('Falha ao gravar a importação:', e);
+        alert('Não foi possível salvar a importação. Verifique o espaço disponível em disco.');
+      });
+      return newState;
+    });
   }, [persistFn]);
 
   const handleUpdateDashboard = useCallback((updates: Partial<DashboardData>) => {
@@ -875,9 +1051,19 @@ export default function App() {
     });
   }, [persistFn]);
 
+  if (isLoading) {
+    return (
+      <div className="app-loading">
+        <div className="app-loading-spinner" />
+        <p>Carregando suas notas...</p>
+      </div>
+    );
+  }
+
   return (
     <div className="app-layout">
       <UpdateNotifier />
+      <SyncStatus status={syncStatus} onRetry={() => syncClientRef.current?.retry()} />
       <Sidebar
         state={state}
         onSetView={handleSetView}
@@ -894,6 +1080,9 @@ export default function App() {
         onNavigateForward={handleNavigateForward}
         canNavigateBack={navigationControls.canGoBack}
         canNavigateForward={navigationControls.canGoForward}
+        onDeleteNote={handleDeleteNote}
+        onToggleFavorite={handleToggleFavorite}
+        onDuplicateNote={handleDuplicateNote}
       />
       {showDashboard ? (
         <Dashboard
@@ -919,7 +1108,7 @@ export default function App() {
           onSelectNote={(id) => navigate((s) => ({ ...s, viewMode: 'all', selectedNoteId: id }))}
         />
       ) : showSettings ? (
-        <Settings settings={state.settings} onUpdateSettings={handleUpdateSettings} />
+        <Settings settings={state.settings} onUpdateSettings={handleUpdateSettings} appState={state} onRestoreBackup={handleRestoreBackup} onImportNotes={handleImportNotes} />
       ) : (
         <>
           <NoteList
@@ -933,6 +1122,7 @@ export default function App() {
             onExportNotes={handleExportNotes}
             onAISummary={handleAISummary}
             onReorderNotes={handleReorderNotes}
+            onDeleteNotes={handleDeleteMultipleNotes}
             commentSearchMatches={commentSearchMatches}
             onSelectComment={handleSelectCommentSearchResult}
           />
