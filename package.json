@@ -17,6 +17,7 @@
   "dependencies": {
     "@tiptap/extension-color": "^2.27.2",
     "@tiptap/extension-highlight": "^2.27.2",
+    "@tiptap/extension-image": "2.27.2",
     "@tiptap/extension-link": "^2.6.0",
     "@tiptap/extension-placeholder": "^2.6.0",
     "@tiptap/extension-task-item": "^2.6.0",
@@ -26,11 +27,13 @@
     "@tiptap/extension-underline": "^2.6.0",
     "@tiptap/react": "^2.6.0",
     "@tiptap/starter-kit": "^2.6.0",
+    "better-sqlite3": "11.7.0",
     "electron-updater": "^6.2.1",
     "lucide-react": "^0.400.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "uuid": "^10.0.0"
+    "uuid": "^10.0.0",
+    "ws": "8.18.0"
   },
   "devDependencies": {
     "@types/react": "^18.3.3",
@@ -53,6 +56,9 @@
     "files": [
       "dist/**/*",
       "electron/**/*"
+    ],
+    "asarUnpack": [
+      "node_modules/better-sqlite3/**"
     ],
     "win": {
       "target": [
