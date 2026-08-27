@@ -116,7 +116,7 @@ autoUpdater.on('update-downloaded', (info) => {
 
 autoUpdater.on('error', (err) => {
   console.error('Auto-updater error:', err.message);
-  sendStatusToWindow('Não foi possível verificar atualizações agora.');
+  // Não envia erros brutos ao renderer; apenas uma mensagem curta caso necessário.
 });
 
 function sendStatusToWindow(message) {
