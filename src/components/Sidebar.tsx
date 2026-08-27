@@ -21,6 +21,7 @@ import {
   Settings,
   Clock,
   Globe,
+  Images,
 } from 'lucide-react';
 
 interface ContextMenuState {
@@ -49,6 +50,8 @@ interface Props {
   onDeleteNote: (id: string) => void;
   onToggleFavorite: (id: string) => void;
   onDuplicateNote: (id: string) => void;
+  onMoveNote?: (noteId: string, notebookId: string | null) => void;
+  dragDropEnabled?: boolean;
 }
 
 export default function Sidebar({
@@ -70,6 +73,8 @@ export default function Sidebar({
   onDeleteNote,
   onToggleFavorite,
   onDuplicateNote,
+  onMoveNote,
+  dragDropEnabled = true,
 }: Props) {
   const [showNotebookInput, setShowNotebookInput] = useState(false);
   const [showTagInput, setShowTagInput] = useState(false);
@@ -79,6 +84,7 @@ export default function Sidebar({
   const [editName, setEditName] = useState('');
   const [expandedNotebooks, setExpandedNotebooks] = useState<Set<string>>(new Set());
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  const [dragOverNotebookId, setDragOverNotebookId] = useState<string | null>(null);
   const contextMenuRef = useRef<HTMLDivElement>(null);
 
   const activeNotes = state.notes.filter((n) => n.status === 'active');
@@ -217,6 +223,10 @@ export default function Sidebar({
             <span>Tarefas</span>
             <span className="nav-item-count">{state.tasks?.length || 0}</span>
           </div>
+          <div className={`nav-item ${state.viewMode === 'gallery' ? 'active' : ''}`} onClick={() => onSetView('gallery' as any)}>
+            <Images className="nav-item-icon" />
+            <span>Galeria</span>
+          </div>
         </div>
 
         <div className="nav-section">
@@ -247,9 +257,19 @@ export default function Sidebar({
             return (
               <div key={nb.id}>
                 <div
-                  className={`nav-item ${state.viewMode === 'notebook' && state.activeNotebookId === nb.id ? 'active' : ''}`}
+                  className={`nav-item ${state.viewMode === 'notebook' && state.activeNotebookId === nb.id ? 'active' : ''} ${dragOverNotebookId === nb.id ? 'drag-over' : ''}`}
                   onClick={() => onSetView('notebook', nb.id)}
                   onContextMenu={(e) => handleNotebookContextMenu(e, nb.id)}
+                  onDragOver={(e) => { if (dragDropEnabled && onMoveNote) { e.preventDefault(); setDragOverNotebookId(nb.id); } }}
+                  onDragLeave={() => setDragOverNotebookId(null)}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setDragOverNotebookId(null);
+                    if (dragDropEnabled && onMoveNote) {
+                      const noteId = e.dataTransfer.getData('text/plain');
+                      if (noteId) onMoveNote(noteId, nb.id);
+                    }
+                  }}
                 >
                   <span
                     className="nav-item-chevron-btn"

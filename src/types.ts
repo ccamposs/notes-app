@@ -66,7 +66,7 @@ export interface Tag {
   color: string;
 }
 
-export type ViewMode = 'dashboard' | 'all' | 'favorites' | 'archived' | 'trash' | 'notebook' | 'tag' | 'search' | 'tasks' | 'settings';
+export type ViewMode = 'dashboard' | 'all' | 'favorites' | 'archived' | 'trash' | 'notebook' | 'tag' | 'search' | 'tasks' | 'settings' | 'gallery';
 
 export type TaskPriority = 'low' | 'medium' | 'high';
 export type TaskStatus = 'pending' | 'completed';
@@ -82,6 +82,15 @@ export interface AppSettings {
   remindersEnabled: boolean;
   desktopNotifications: boolean;
   soundNotifications: boolean;
+  // Recursos adicionais (todos ativos por padrão)
+  searchPreviewEnabled: boolean;
+  templatesEnabled: boolean;
+  dragDropEnabled: boolean;
+  keyboardShortcutsEnabled: boolean;
+  wordCountEnabled: boolean;
+  quickNoteEnabled: boolean;
+  noteLinksEnabled: boolean;
+  autoSummaryEnabled: boolean;
 }
 
 export type DashboardWidgetId = 'scratchpad' | 'tasks' | 'summary' | 'upcoming' | 'notebooks' | 'recent' | 'favorites' | 'inbox' | 'quick-actions';

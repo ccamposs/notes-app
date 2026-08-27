@@ -21,7 +21,7 @@ interface BackupUiState {
 
 export type BackupRestoreData = Partial<AppState> & Pick<Partial<BackupUiState>, 'floatingToolbarItems'>;
 
-const VIEW_MODES: ViewMode[] = ['dashboard', 'all', 'favorites', 'archived', 'trash', 'notebook', 'tag', 'search', 'tasks', 'settings'];
+const VIEW_MODES: ViewMode[] = ['dashboard', 'all', 'favorites', 'archived', 'trash', 'notebook', 'tag', 'search', 'tasks', 'settings', 'gallery'];
 const FLOATING_TOOLBAR_ITEM_IDS = ['bold', 'italic', 'underline', 'strike', 'color', 'textStyle', 'lists', 'quote', 'link', 'bookmark', 'collapsible', 'comment', 'undo', 'redo', 'task'];
 const DEFAULT_FLOATING_TOOLBAR_ITEMS = ['bold', 'italic', 'underline', 'strike', 'color', 'textStyle', 'lists', 'link', 'comment'];
 

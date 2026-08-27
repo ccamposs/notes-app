@@ -23,6 +23,11 @@ import Tasks from './components/Tasks';
 import Settings from './components/Settings';
 import UpdateNotifier from './components/UpdateNotifier';
 import SyncStatus from './components/SyncStatus';
+import QuickNote from './components/QuickNote';
+import NoteTemplates from './components/NoteTemplates';
+import WordCount from './components/WordCount';
+import NoteSummary from './components/NoteSummary';
+import Gallery from './components/Gallery';
 import { LocalSyncClient, SyncStatus as SyncStatusData } from './sync';
 
 type NavigationEntry = Pick<AppState, 'viewMode' | 'activeNotebookId' | 'activeTagId' | 'selectedNoteId' | 'searchQuery'>;
@@ -56,6 +61,9 @@ export default function App() {
   const [navigationControls, setNavigationControls] = useState({ canGoBack: false, canGoForward: false });
   const [openNoteIds, setOpenNoteIds] = useState<string[]>([]);
   const [focusCommentId, setFocusCommentId] = useState<string | null>(null);
+  const [showQuickNote, setShowQuickNote] = useState(false);
+  const [showTemplates, setShowTemplates] = useState(false);
+  const [galleryReturnView, setGalleryReturnView] = useState<{ viewMode: ViewMode; notebookId: string | null; noteId: string | null } | null>(null);
   const saveTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const syncClientRef = useRef<LocalSyncClient | null>(null);
   const [syncStatus, setSyncStatus] = useState<SyncStatusData>({ phase: 'connecting', pendingChanges: 0, lastSyncedAt: 0 });
@@ -242,6 +250,41 @@ export default function App() {
     document.documentElement.dataset.theme = state.settings.theme;
   }, [state.settings.theme]);
 
+  // Atalhos de teclado globais
+  useEffect(() => {
+    if (!state.settings.keyboardShortcutsEnabled) return;
+    const handleKeydown = (e: KeyboardEvent) => {
+      // Ignora se está num input/textarea (exceto se for Escape)
+      const tag = (e.target as HTMLElement)?.tagName;
+      const isInput = tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement)?.isContentEditable;
+
+      if (e.ctrlKey && e.key === 'n' && !e.shiftKey) {
+        e.preventDefault();
+        handleCreateNote();
+      } else if (e.ctrlKey && e.shiftKey && e.key === 'N') {
+        e.preventDefault();
+        if (state.settings.quickNoteEnabled) setShowQuickNote(true);
+      } else if (e.ctrlKey && e.shiftKey && e.key === 'F') {
+        e.preventDefault();
+        navigate((s) => ({ ...s, viewMode: 'search', searchQuery: '' }));
+      } else if (e.ctrlKey && e.key === 't' && !e.shiftKey) {
+        e.preventDefault();
+        if (state.settings.templatesEnabled) setShowTemplates(true);
+      } else if (e.ctrlKey && e.key === '1' && !isInput) {
+        e.preventDefault();
+        navigate((s) => ({ ...s, viewMode: 'dashboard' }));
+      } else if (e.ctrlKey && e.key === '2' && !isInput) {
+        e.preventDefault();
+        navigate((s) => ({ ...s, viewMode: 'all' }));
+      } else if (e.ctrlKey && e.key === '3' && !isInput) {
+        e.preventDefault();
+        navigate((s) => ({ ...s, viewMode: 'tasks' }));
+      }
+    };
+    document.addEventListener('keydown', handleKeydown);
+    return () => document.removeEventListener('keydown', handleKeydown);
+  }, [state.settings.keyboardShortcutsEnabled, state.settings.quickNoteEnabled, state.settings.templatesEnabled, navigate]);
+
   // Check reminders every 30 seconds
   useEffect(() => {
     if (!state.settings.remindersEnabled) return;
@@ -314,6 +357,68 @@ export default function App() {
       };
     });
   }, [persistFn]);
+
+  const handleCreateNoteFromTemplate = useCallback((template: { title: string; content: string }) => {
+    persistFn((s) => {
+      const notebookId = s.settings.newNoteLocation === 'current-notebook' && s.viewMode === 'notebook'
+        ? s.activeNotebookId
+        : null;
+      const note = createNote(notebookId);
+      note.title = template.title;
+      note.content = template.content;
+      return {
+        ...s,
+        notes: [note, ...s.notes],
+        selectedNoteId: note.id,
+        viewMode: 'all' as ViewMode,
+      };
+    });
+    setShowTemplates(false);
+  }, [persistFn]);
+
+  const handleQuickNoteSave = useCallback((title: string, content: string) => {
+    persistFn((s) => {
+      const note = createNote(null);
+      note.title = title;
+      note.content = content;
+      return {
+        ...s,
+        notes: [note, ...s.notes],
+      };
+    });
+  }, [persistFn]);
+
+  const handleNoteLinkClick = useCallback((noteId: string) => {
+    navigate((s) => ({ ...s, selectedNoteId: noteId, viewMode: 'all' }));
+  }, [navigate]);
+
+  const handleOpenGallery = useCallback(() => {
+    setGalleryReturnView({ viewMode: state.viewMode, notebookId: state.activeNotebookId, noteId: state.selectedNoteId });
+    navigate((s) => ({ ...s, viewMode: 'gallery' as ViewMode }));
+  }, [navigate, state.viewMode, state.activeNotebookId, state.selectedNoteId]);
+
+  const handleGalleryNavigateToNote = useCallback((noteId: string, notebookId: string | null) => {
+    navigate((s) => ({
+      ...s,
+      viewMode: notebookId ? 'notebook' : 'all',
+      activeNotebookId: notebookId,
+      selectedNoteId: noteId,
+    }));
+  }, [navigate]);
+
+  const handleGalleryBack = useCallback(() => {
+    if (galleryReturnView) {
+      navigate((s) => ({
+        ...s,
+        viewMode: galleryReturnView.viewMode,
+        activeNotebookId: galleryReturnView.notebookId,
+        selectedNoteId: galleryReturnView.noteId,
+      }));
+      setGalleryReturnView(null);
+    } else {
+      navigate((s) => ({ ...s, viewMode: 'all' }));
+    }
+  }, [navigate, galleryReturnView]);
 
   const handleSelectNote = useCallback((noteId: string) => {
     setFocusCommentId(null);
@@ -1092,7 +1197,8 @@ export default function App() {
   const showDashboard = state.viewMode === 'dashboard';
   const showTasks = state.viewMode === 'tasks';
   const showSettings = state.viewMode === 'settings';
-  const showEditor = !!selectedNote && !showDashboard && !showTasks && !showSettings;
+  const showGallery = state.viewMode === 'gallery';
+  const showEditor = !!selectedNote && !showDashboard && !showTasks && !showSettings && !showGallery;
   const [initialTaskTab, setInitialTaskTab] = useState<string>('all');
 
   const handleViewOverdueTasks = useCallback(() => {
@@ -1128,6 +1234,12 @@ export default function App() {
     <div className="app-layout">
       <UpdateNotifier />
       <SyncStatus status={syncStatus} onRetry={() => syncClientRef.current?.retry()} />
+      {showQuickNote && state.settings.quickNoteEnabled && (
+        <QuickNote onSave={handleQuickNoteSave} onClose={() => setShowQuickNote(false)} />
+      )}
+      {showTemplates && state.settings.templatesEnabled && (
+        <NoteTemplates onSelect={handleCreateNoteFromTemplate} onClose={() => setShowTemplates(false)} />
+      )}
       <Sidebar
         state={state}
         onSetView={handleSetView}
@@ -1147,6 +1259,8 @@ export default function App() {
         onDeleteNote={handleDeleteNote}
         onToggleFavorite={handleToggleFavorite}
         onDuplicateNote={handleDuplicateNote}
+        onMoveNote={handleMoveNote}
+        dragDropEnabled={state.settings.dragDropEnabled}
       />
       {showDashboard ? (
         <Dashboard
@@ -1173,6 +1287,14 @@ export default function App() {
         />
       ) : showSettings ? (
         <Settings settings={state.settings} onUpdateSettings={handleUpdateSettings} appState={state} onRestoreBackup={handleRestoreBackup} onImportNotes={handleImportNotes} />
+      ) : showGallery ? (
+        <Gallery
+          notes={state.notes}
+          notebooks={state.notebooks}
+          onNavigateToNote={handleGalleryNavigateToNote}
+          onBack={handleGalleryBack}
+          returnLabel={galleryReturnView ? 'Voltar para galeria' : undefined}
+        />
       ) : (
         <>
           <NoteList
@@ -1180,6 +1302,8 @@ export default function App() {
             selectedNoteId={state.selectedNoteId}
             viewMode={state.viewMode}
             tags={state.tags}
+            searchQuery={state.searchQuery}
+            searchPreviewEnabled={state.settings.searchPreviewEnabled}
             onSelectNote={handleSelectNote}
             onToggleFavorite={handleToggleFavorite}
             onDuplicateNote={handleDuplicateNote}
@@ -1232,7 +1356,16 @@ export default function App() {
               onResolveCommentThread={handleResolveCommentThread}
               onReopenCommentThread={handleReopenCommentThread}
               focusCommentId={focusCommentId}
+              allNotes={state.notes}
+              onNoteLinkClick={handleNoteLinkClick}
+              noteLinksEnabled={state.settings.noteLinksEnabled}
             />
+            {state.settings.wordCountEnabled && selectedNote && (
+              <WordCount content={selectedNote.content} />
+            )}
+            {state.settings.autoSummaryEnabled && selectedNote && (
+              <NoteSummary content={selectedNote.content} />
+            )}
             </div>
           ) : (
             <div className="editor-panel">

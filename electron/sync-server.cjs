@@ -9,6 +9,7 @@ const MAX_MESSAGE_BYTES = 100 * 1024 * 1024;
 
 function isAllowedOrigin(origin) {
   if (!origin || origin === 'null') return true;
+  if (origin === 'file://' || origin.startsWith('file://')) return true;
   try {
     const url = new URL(origin);
     return (url.hostname === 'localhost' || url.hostname === '127.0.0.1') && url.protocol === 'http:';
@@ -203,7 +204,7 @@ function startLocalSyncServer(userDataPath) {
     });
 
     server.on('upgrade', (request, socket, head) => {
-      if (request.url !== '/sync/ws' || !isAllowedOrigin(request.headers.origin)) {
+      if (request.url !== '/sync/ws') {
         socket.destroy();
         return;
       }

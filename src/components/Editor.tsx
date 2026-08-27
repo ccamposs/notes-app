@@ -15,6 +15,8 @@ import Image from '@tiptap/extension-image';
 import { CollapsibleNode } from '../extensions/CollapsibleNode';
 import { BookmarkMark } from '../extensions/BookmarkMark';
 import { CommentMark } from '../extensions/CommentMark';
+import { NoteLinkMark } from '../extensions/NoteLinkMark';
+import { SpoilerImage } from '../extensions/SpoilerImage';
 import { Note, Tag, Notebook, Bookmark, CommentMessage, CommentThread, NoteVersion, StableLine } from '../types';
 import { reconcileLineStability } from '../store';
 import {
@@ -82,6 +84,9 @@ interface Props {
   onResolveCommentThread: (noteId: string, threadId: string) => void;
   onReopenCommentThread: (noteId: string, threadId: string) => void;
   focusCommentId: string | null;
+  allNotes?: { id: string; title: string }[];
+  onNoteLinkClick?: (noteId: string) => void;
+  noteLinksEnabled?: boolean;
 }
 
 const TEXT_COLORS = [
@@ -279,6 +284,9 @@ export default function Editor({
   onResolveCommentThread,
   onReopenCommentThread,
   focusCommentId,
+  allNotes = [],
+  onNoteLinkClick,
+  noteLinksEnabled = true,
 }: Props) {
   const [showTagSelector, setShowTagSelector] = useState(false);
   const [showColorPicker, setShowColorPicker] = useState(false);
@@ -330,6 +338,7 @@ export default function Editor({
   const [versionFilterYear, setVersionFilterYear] = useState('');
   const [saved, setSaved] = useState(false);
   const [showInlineTask, setShowInlineTask] = useState(false);
+  const [imageContextMenu, setImageContextMenu] = useState<{ x: number; y: number; pos: number } | null>(null);
   const [inlineTaskTitle, setInlineTaskTitle] = useState('');
   const [inlineTaskDueDate, setInlineTaskDueDate] = useState<string | null>(null);
   const [inlineTaskDueTime, setInlineTaskDueTime] = useState<string | null>(null);
@@ -366,10 +375,11 @@ export default function Editor({
       Color,
       TextAlign.configure({ types: ['heading', 'paragraph', 'blockquote'] }),
       Highlight.configure({ multicolor: true }),
-      Image.configure({ inline: false, allowBase64: true }),
+      SpoilerImage.configure({ inline: false, allowBase64: true }),
       CollapsibleNode,
       BookmarkMark,
       CommentMark,
+      ...(noteLinksEnabled ? [NoteLinkMark] : []),
     ],
     content: note.content,
     onUpdate: ({ editor }) => {
@@ -677,6 +687,133 @@ export default function Editor({
     });
     if (activeCommentThreadId === threadId) closeCommentPopover();
   };
+
+  // ===== Spoiler de Imagens =====
+
+  const handleImageContextMenu = useCallback((event: MouseEvent) => {
+    const target = event.target as HTMLElement;
+    if (target.tagName !== 'IMG' || !editor) return;
+    event.preventDefault();
+    event.stopPropagation();
+    // Encontra a posição do nó da imagem
+    const pos = editor.view.posAtDOM(target, 0);
+    setImageContextMenu({ x: event.clientX, y: event.clientY, pos });
+  }, [editor]);
+
+  const toggleImageSpoiler = useCallback((pos: number, spoiler: boolean) => {
+    if (!editor) return;
+    const node = editor.state.doc.nodeAt(pos);
+    if (!node || node.type.name !== 'image') return;
+    skipNextUpdate.current = true;
+    const tr = editor.state.tr.setNodeMarkup(pos, undefined, {
+      ...node.attrs,
+      'data-spoiler': spoiler ? 'true' : 'false',
+    });
+    editor.view.dispatch(tr);
+    const html = editor.getHTML();
+    onUpdateNote(note.id, { content: html });
+    showSavedIndicator();
+    setImageContextMenu(null);
+  }, [editor, note.id, onUpdateNote, showSavedIndicator]);
+
+  const hideAllImages = useCallback(() => {
+    if (!editor) return;
+    skipNextUpdate.current = true;
+    let tr = editor.state.tr;
+    editor.state.doc.descendants((node, pos) => {
+      if (node.type.name === 'image' && node.attrs['data-spoiler'] !== 'true') {
+        tr = tr.setNodeMarkup(pos, undefined, { ...node.attrs, 'data-spoiler': 'true' });
+      }
+    });
+    editor.view.dispatch(tr);
+    const html = editor.getHTML();
+    onUpdateNote(note.id, { content: html });
+    showSavedIndicator();
+    setImageContextMenu(null);
+  }, [editor, note.id, onUpdateNote, showSavedIndicator]);
+
+  useEffect(() => {
+    const container = editorContentRef.current;
+    if (!container) return;
+    container.addEventListener('contextmenu', handleImageContextMenu);
+    return () => container.removeEventListener('contextmenu', handleImageContextMenu);
+  }, [handleImageContextMenu]);
+
+  // Suporte a arrastar e soltar imagens de fora do app
+  useEffect(() => {
+    const container = editorContentRef.current;
+    if (!container || !editor) return;
+
+    const handleDrop = (e: DragEvent) => {
+      const files = e.dataTransfer?.files;
+      if (!files || files.length === 0) return;
+      const imageFiles = Array.from(files).filter((f) => f.type.startsWith('image/'));
+      if (imageFiles.length === 0) return;
+
+      e.preventDefault();
+      e.stopPropagation();
+
+      imageFiles.forEach((file) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const base64 = reader.result as string;
+          editor.chain().focus().setImage({ src: base64 }).run();
+        };
+        reader.readAsDataURL(file);
+      });
+    };
+
+    const handleDragOver = (e: DragEvent) => {
+      if (e.dataTransfer?.types.includes('Files')) {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = 'copy';
+      }
+    };
+
+    container.addEventListener('drop', handleDrop);
+    container.addEventListener('dragover', handleDragOver);
+    return () => {
+      container.removeEventListener('drop', handleDrop);
+      container.removeEventListener('dragover', handleDragOver);
+    };
+  }, [editor]);
+
+  useEffect(() => {
+    if (!imageContextMenu) return;
+    const close = () => setImageContextMenu(null);
+    document.addEventListener('click', close);
+    return () => document.removeEventListener('click', close);
+  }, [imageContextMenu]);
+
+  // Clique na imagem com spoiler para revelar, e clique no botão de ocultar
+  useEffect(() => {
+    const container = editorContentRef.current;
+    if (!container || !editor) return;
+    const handleClick = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      // Clicar no label "SPOILER" ou na imagem borrada revela
+      if (target.classList.contains('spoiler-reveal-btn')) {
+        const wrapper = target.closest('.image-spoiler-wrapper');
+        const img = wrapper?.querySelector('img') as HTMLElement | null;
+        if (img) {
+          const pos = editor.view.posAtDOM(img, 0);
+          toggleImageSpoiler(pos, false);
+        }
+        return;
+      }
+      // Clicar no ícone de re-ocultar
+      if (target.classList.contains('spoiler-hide-btn') || target.closest('.spoiler-hide-btn')) {
+        const wrapper = target.closest('.image-revealed-wrapper');
+        const img = wrapper?.querySelector('img') as HTMLElement | null;
+        if (img) {
+          const pos = editor.view.posAtDOM(img, 0);
+          toggleImageSpoiler(pos, true);
+        }
+      }
+    };
+    container.addEventListener('click', handleClick);
+    return () => container.removeEventListener('click', handleClick);
+  }, [editor, toggleImageSpoiler]);
 
   const handleAddBookmark = () => {
     if (!editor) return;
@@ -1337,7 +1474,14 @@ export default function Editor({
       <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
         <div className="editor-content" ref={editorContentRef} style={{ flex: 1, position: 'relative' }}>
           {!isDeleted && editor && (
-            <BubbleMenu editor={editor} tippyOptions={{ placement: 'top', duration: 120, maxWidth: 'none' }} shouldShow={({ state: editorState }) => !editorState.selection.empty}>
+            <BubbleMenu editor={editor} tippyOptions={{ placement: 'top', duration: 120, maxWidth: 'none' }} shouldShow={({ state: editorState }) => {
+              if (editorState.selection.empty) return false;
+              // Não mostra barra flutuante ao selecionar imagem
+              const { $from } = editorState.selection;
+              if ($from.parent.type.name === 'image') return false;
+              if ('node' in editorState.selection && (editorState.selection as any).node?.type.name === 'image') return false;
+              return true;
+            }}>
               <div className="floating-toolbar" role="toolbar" aria-label="Formatação do texto selecionado">
                 {floatingToolbarItems.map((item) => {
                   const action = floatingToolbarActions[item];
@@ -1417,6 +1561,58 @@ export default function Editor({
                 if (threadId) focusCommentThread(threadId);
               }}
             />
+          )}
+
+          {/* Menu de contexto de imagem (spoiler, marcações, copiar) */}
+          {imageContextMenu && (
+            <div className="image-context-menu" style={{ top: imageContextMenu.y, left: imageContextMenu.x }}>
+              {(() => {
+                const node = editor?.state.doc.nodeAt(imageContextMenu.pos);
+                const isSpoiler = node?.attrs['data-spoiler'] === 'true';
+                const currentLabels = (node?.attrs['data-labels'] || '').split(',').filter(Boolean);
+                return (
+                  <>
+                    <button onClick={() => toggleImageSpoiler(imageContextMenu.pos, !isSpoiler)}>
+                      {isSpoiler ? 'Revelar imagem' : 'Ocultar imagem (spoiler)'}
+                    </button>
+                    <button onClick={hideAllImages}>Ocultar todas as imagens</button>
+                    <div className="image-context-separator" />
+                    <button onClick={() => {
+                      const label = prompt('Nome da marcação:', currentLabels.join(', '));
+                      if (label === null) return;
+                      const labels = label.split(',').map((l) => l.trim()).filter(Boolean).join(',');
+                      if (!editor) return;
+                      const n = editor.state.doc.nodeAt(imageContextMenu.pos);
+                      if (!n) return;
+                      skipNextUpdate.current = true;
+                      const tr = editor.state.tr.setNodeMarkup(imageContextMenu.pos, undefined, { ...n.attrs, 'data-labels': labels });
+                      editor.view.dispatch(tr);
+                      onUpdateNote(note.id, { content: editor.getHTML() });
+                      showSavedIndicator();
+                      setImageContextMenu(null);
+                    }}>
+                      {currentLabels.length > 0 ? `Marcações: ${currentLabels.join(', ')}` : 'Adicionar marcação'}
+                    </button>
+                    <div className="image-context-separator" />
+                    <button onClick={() => {
+                      const src = node?.attrs.src;
+                      if (src) navigator.clipboard.writeText(src);
+                      setImageContextMenu(null);
+                    }}>Copiar imagem</button>
+                    <button onClick={() => {
+                      const src = node?.attrs.src;
+                      if (src) {
+                        const a = document.createElement('a');
+                        a.href = src;
+                        a.download = `imagem-${Date.now()}.png`;
+                        a.click();
+                      }
+                      setImageContextMenu(null);
+                    }}>Salvar imagem como...</button>
+                  </>
+                );
+              })()}
+            </div>
           )}
 
           {activeCommentThread && commentPopoverPosition && createPortal(

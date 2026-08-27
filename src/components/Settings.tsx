@@ -4,7 +4,7 @@ import { requestNotificationPermission } from '../notifications';
 import { exportStateAsJson, parseBackupJson, exportAsMarkdown, exportAsEnex, exportAsHtmlBundle, importMarkdownFiles, importEnexFile, importHtmlFiles, downloadTextFile, ExportFile, ImportedNote, type BackupRestoreData } from '../backup';
 import { getStorageEstimate, formatBytes, StorageEstimate } from '../storage';
 import { getStateSizeBytes } from '../store';
-import { Bell, Check, Database, Download, FileText, FolderDown, FolderUp, HardDrive, Image, Monitor, Moon, Settings as SettingsIcon, Sun, Upload, Volume2 } from 'lucide-react';
+import { Bell, Check, Database, Download, FileText, FolderDown, FolderUp, HardDrive, Image, Monitor, Moon, Settings as SettingsIcon, Sun, Upload, Volume2, Zap } from 'lucide-react';
 
 interface Props {
   settings: AppSettings;
@@ -40,6 +40,22 @@ export default function Settings({ settings, onUpdateSettings, appState, onResto
   }, [appState.notes.length, importProgress.active]);
 
   const dataSizeBytes = getStateSizeBytes(appState);
+
+  function AutostartToggle() {
+    const [autostart, setAutostart] = useState(false);
+    useEffect(() => {
+      window.electronAPI?.getAutostart().then(setAutostart).catch(() => {});
+    }, []);
+    return (
+      <label className="settings-toggle-row">
+        <div><strong>Iniciar com o Windows</strong><span>O app inicia minimizado na bandeja ao ligar o computador.</span></div>
+        <input type="checkbox" checked={autostart} onChange={(e) => {
+          const value = e.target.checked;
+          window.electronAPI?.setAutostart(value).then(setAutostart).catch(() => {});
+        }} />
+      </label>
+    );
+  }
   const imageCount = appState.notes.reduce((total, note) => {
     const matches = note.content.match(/<img[^>]+src="data:image/gi);
     return total + (matches ? matches.length : 0);
@@ -409,6 +425,45 @@ export default function Settings({ settings, onUpdateSettings, appState, onResto
             <span className="settings-progress-label">{importProgress.label}</span>
           </div>
         )}
+      </section>
+
+      <section className="settings-section">
+        <div className="settings-section-heading"><Zap size={18} /><div><h2>Recursos</h2><p>Ative ou desative funcionalidades do aplicativo.</p></div></div>
+        {window.electronAPI?.getAutostart && (
+          <AutostartToggle />
+        )}
+        <label className="settings-toggle-row">
+          <div><strong>Busca com preview</strong><span>Mostra trechos destacados nos resultados da busca.</span></div>
+          <input type="checkbox" checked={settings.searchPreviewEnabled} onChange={(e) => onUpdateSettings({ searchPreviewEnabled: e.target.checked })} />
+        </label>
+        <label className="settings-toggle-row">
+          <div><strong>Templates de notas</strong><span>Permite criar notas a partir de modelos (Ctrl+T).</span></div>
+          <input type="checkbox" checked={settings.templatesEnabled} onChange={(e) => onUpdateSettings({ templatesEnabled: e.target.checked })} />
+        </label>
+        <label className="settings-toggle-row">
+          <div><strong>Arrastar notas entre cadernos</strong><span>Arraste notas na sidebar para mover entre cadernos.</span></div>
+          <input type="checkbox" checked={settings.dragDropEnabled} onChange={(e) => onUpdateSettings({ dragDropEnabled: e.target.checked })} />
+        </label>
+        <label className="settings-toggle-row">
+          <div><strong>Atalhos de teclado</strong><span>Ctrl+N nova nota, Ctrl+Shift+N nota rápida, Ctrl+Shift+F busca, Ctrl+1/2/3 navegar.</span></div>
+          <input type="checkbox" checked={settings.keyboardShortcutsEnabled} onChange={(e) => onUpdateSettings({ keyboardShortcutsEnabled: e.target.checked })} />
+        </label>
+        <label className="settings-toggle-row">
+          <div><strong>Contagem de palavras</strong><span>Exibe palavras e caracteres no rodapé do editor.</span></div>
+          <input type="checkbox" checked={settings.wordCountEnabled} onChange={(e) => onUpdateSettings({ wordCountEnabled: e.target.checked })} />
+        </label>
+        <label className="settings-toggle-row">
+          <div><strong>Nota rápida</strong><span>Janela flutuante para anotar rapidamente (Ctrl+Shift+N).</span></div>
+          <input type="checkbox" checked={settings.quickNoteEnabled} onChange={(e) => onUpdateSettings({ quickNoteEnabled: e.target.checked })} />
+        </label>
+        <label className="settings-toggle-row">
+          <div><strong>Links entre notas</strong><span>Permite criar referências para outras notas com [[título]].</span></div>
+          <input type="checkbox" checked={settings.noteLinksEnabled} onChange={(e) => onUpdateSettings({ noteLinksEnabled: e.target.checked })} />
+        </label>
+        <label className="settings-toggle-row">
+          <div><strong>Resumo automático</strong><span>Gera um resumo curto da nota automaticamente.</span></div>
+          <input type="checkbox" checked={settings.autoSummaryEnabled} onChange={(e) => onUpdateSettings({ autoSummaryEnabled: e.target.checked })} />
+        </label>
       </section>
 
       <section className="settings-section settings-info-section">

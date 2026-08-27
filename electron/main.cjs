@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Notification, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, Notification, dialog, shell, Tray, Menu, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { autoUpdater } = require('electron-updater');
@@ -10,9 +10,11 @@ const dataPersistence = require('./data-persistence.cjs');
 app.disableHardwareAcceleration();
 
 let mainWindow = null;
+let tray = null;
 let localSyncServer = null;
 let localWebServer = null;
 let updateCheckInterval = null;
+let isQuitting = false;
 
 // Baixa atualizações automaticamente; a instalação só ocorre quando o usuário
 // reinicia pelo aviso ou ao encerrar o aplicativo.
@@ -44,6 +46,13 @@ function createWindow() {
   } else {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
   }
+
+  mainWindow.on('close', (e) => {
+    if (!isQuitting) {
+      e.preventDefault();
+      mainWindow.hide();
+    }
+  });
 
   mainWindow.on('closed', () => {
     mainWindow = null;
@@ -214,6 +223,74 @@ ipcMain.handle('disk-restore-backup', (_, backupPath) => {
   }
 });
 
+// ===== Autostart (iniciar com Windows) =====
+
+ipcMain.handle('get-autostart', () => {
+  return app.getLoginItemSettings().openAtLogin;
+});
+
+ipcMain.handle('set-autostart', (_, enabled) => {
+  app.setLoginItemSettings({
+    openAtLogin: enabled,
+    openAsHidden: true,
+  });
+  return enabled;
+});
+
+// ===== System Tray =====
+
+function createTray() {
+  const iconPath = path.join(__dirname, '../public/icon.ico');
+  let trayIcon;
+  try {
+    trayIcon = nativeImage.createFromPath(iconPath);
+  } catch {
+    trayIcon = nativeImage.createEmpty();
+  }
+
+  tray = new Tray(trayIcon);
+  tray.setToolTip('Notes App');
+
+  const contextMenu = Menu.buildFromTemplate([
+    {
+      label: 'Abrir Notes App',
+      click: () => {
+        if (mainWindow) {
+          mainWindow.show();
+          mainWindow.focus();
+        } else {
+          createWindow();
+        }
+      },
+    },
+    {
+      label: 'Abrir versão Web',
+      click: () => {
+        const port = localWebServer ? localWebServer.port : 5173;
+        shell.openExternal(`http://localhost:${port}`);
+      },
+    },
+    { type: 'separator' },
+    {
+      label: 'Sair completamente',
+      click: () => {
+        isQuitting = true;
+        app.quit();
+      },
+    },
+  ]);
+
+  tray.setContextMenu(contextMenu);
+  tray.on('double-click', () => {
+    if (mainWindow) {
+      mainWindow.show();
+      mainWindow.focus();
+    } else {
+      createWindow();
+    }
+  });
+}
+
 // ===== App lifecycle =====
 app.whenReady().then(async () => {
   // Inicializa persistência segura em disco
@@ -227,8 +304,7 @@ app.whenReady().then(async () => {
     console.error('Não foi possível iniciar o serviço local de sincronização:', error.message);
   }
 
-  // Servidor web embutido: serve os arquivos compilados (dist/) para que
-  // o navegador possa acessar a versão web sem Vite ou dependências externas.
+  // Servidor web embutido
   if (app.isPackaged) {
     try {
       localWebServer = await startWebServer(path.join(__dirname, '../dist'));
@@ -238,10 +314,12 @@ app.whenReady().then(async () => {
     }
   }
 
+  createTray();
   createWindow();
 });
 
 app.on('before-quit', () => {
+  isQuitting = true;
   if (updateCheckInterval) clearInterval(updateCheckInterval);
   dataPersistence.stopAndFinalBackup();
   if (localSyncServer) localSyncServer.stop();
@@ -249,7 +327,7 @@ app.on('before-quit', () => {
 });
 
 app.on('window-all-closed', () => {
-  app.quit();
+  // Não fecha o app — mantém o tray ativo
 });
 
 app.on('activate', () => {

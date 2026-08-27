@@ -1,7 +1,22 @@
-import { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Note, Tag, ViewMode } from '../types';
 import { Star, FileText, Download, Filter, CheckSquare2, X, Pin, Copy, Sparkles, SortAsc, GripVertical, MessageSquare } from 'lucide-react';
 import { stripHtml } from '../store';
+
+function getSearchSnippet(html: string, query: string): React.ReactNode {
+  const text = html.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/\s+/g, ' ').trim();
+  if (!query.trim()) return text.slice(0, 100) || 'Nota vazia...';
+  const lowerText = text.toLowerCase();
+  const lowerQuery = query.toLowerCase();
+  const idx = lowerText.indexOf(lowerQuery);
+  if (idx === -1) return text.slice(0, 100) || 'Nota vazia...';
+  const start = Math.max(0, idx - 40);
+  const end = Math.min(text.length, idx + query.length + 60);
+  const before = (start > 0 ? '...' : '') + text.slice(start, idx);
+  const match = text.slice(idx, idx + query.length);
+  const after = text.slice(idx + query.length, end) + (end < text.length ? '...' : '');
+  return <>{before}<mark className="search-highlight">{match}</mark>{after}</>;
+}
 
 type SortMode = 'updated' | 'created' | 'alpha' | 'manual';
 type FilterMode = 'all' | 'with-tags' | 'no-tags' | 'recent-week' | 'with-bookmarks';
@@ -17,6 +32,8 @@ interface Props {
   selectedNoteId: string | null;
   viewMode: ViewMode;
   tags: Tag[];
+  searchQuery?: string;
+  searchPreviewEnabled?: boolean;
   onSelectNote: (id: string) => void;
   onToggleFavorite: (id: string) => void;
   onDuplicateNote: (id: string) => void;
@@ -39,6 +56,7 @@ const viewTitles: Record<ViewMode, string> = {
   search: 'Resultados da busca',
   tasks: 'Tarefas',
   settings: 'Configurações',
+  gallery: 'Galeria',
 };
 
 export default function NoteList({
@@ -46,6 +64,8 @@ export default function NoteList({
   selectedNoteId,
   viewMode,
   tags,
+  searchQuery = '',
+  searchPreviewEnabled = true,
   onSelectNote,
   onToggleFavorite,
   onDuplicateNote,
@@ -333,7 +353,9 @@ export default function NoteList({
                   {note.title || 'Sem título'}
                 </div>
                 <div className="note-card-excerpt">
-                  {stripHtml(note.content) || 'Nota vazia...'}
+                  {searchQuery && searchPreviewEnabled && viewMode === 'search'
+                    ? getSearchSnippet(note.content, searchQuery)
+                    : (stripHtml(note.content) || 'Nota vazia...')}
                 </div>
                 {commentMatches.length > 0 && (
                   <div className="note-card-comment-match" title={commentMatches[0].text}>

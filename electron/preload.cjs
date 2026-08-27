@@ -19,6 +19,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   diskListBackups: () => ipcRenderer.invoke('disk-list-backups'),
   diskRestoreBackup: (backupPath) => ipcRenderer.invoke('disk-restore-backup', backupPath),
 
+  // Autostart
+  getAutostart: () => ipcRenderer.invoke('get-autostart'),
+  setAutostart: (enabled) => ipcRenderer.invoke('set-autostart', enabled),
+
   // Listen for update events
   onUpdateStatus: (callback) => {
     const listener = (_, message) => callback(message);

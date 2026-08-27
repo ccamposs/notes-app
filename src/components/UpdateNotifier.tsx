@@ -16,6 +16,8 @@ declare global {
       diskLoadState: () => Promise<{ state: unknown; source: string }>;
       diskListBackups: () => Promise<{ file: string; path: string; size: number; date: string }[]>;
       diskRestoreBackup: (backupPath: string) => Promise<{ success: boolean; state?: unknown; error?: string }>;
+      getAutostart: () => Promise<boolean>;
+      setAutostart: (enabled: boolean) => Promise<boolean>;
       onUpdateStatus: (callback: (message: string) => void) => () => void;
       onUpdateDownloaded: (callback: (version: string) => void) => () => void;
     };
