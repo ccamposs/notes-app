@@ -20,6 +20,7 @@ import {
   ListTodo,
   Settings,
   Clock,
+  Globe,
 } from 'lucide-react';
 
 interface ContextMenuState {
@@ -362,6 +363,18 @@ export default function Sidebar({
         </div>
       </nav>
       <div className="sidebar-settings">
+        {window.electronAPI && (
+          <button
+            type="button"
+            className="nav-item"
+            onClick={() => window.electronAPI!.openWebVersion()}
+            aria-label="Abrir versão web"
+            title="Abrir no navegador"
+          >
+            <Globe className="nav-item-icon" />
+            <span>Abrir no navegador</span>
+          </button>
+        )}
         <button
           type="button"
           className={`nav-item ${state.viewMode === 'settings' ? 'active' : ''}`}

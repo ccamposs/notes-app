@@ -61,17 +61,74 @@ export default function App() {
   const [syncStatus, setSyncStatus] = useState<SyncStatusData>({ phase: 'connecting', pendingChanges: 0, lastSyncedAt: 0 });
   const isRevertingRef = useRef(false);
 
-  // Carrega os dados do IndexedDB na abertura
+  // Carrega os dados do IndexedDB na abertura.
+  // Se o IndexedDB estiver vazio (nova instalação), tenta buscar do disco (Electron),
+  // do serviço de sincronização, ou dos backups automáticos.
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const loaded = await loadStateAsync();
+      let loaded = await loadStateAsync();
+
+      // Se não há notas locais, tenta recuperar de fontes alternativas
+      if (loaded.notes.length === 0) {
+        // 1. Tenta a persistência em disco do Electron
+        if (window.electronAPI?.diskLoadState) {
+          try {
+            const diskResult = await window.electronAPI.diskLoadState();
+            if (diskResult.state && Array.isArray((diskResult.state as any).notes) && (diskResult.state as any).notes.length > 0) {
+              const diskState = diskResult.state as any;
+              loaded = { ...loaded, notes: diskState.notes, notebooks: diskState.notebooks || loaded.notebooks, tags: diskState.tags || loaded.tags, tasks: diskState.tasks || loaded.tasks, settings: diskState.settings || loaded.settings, dashboard: diskState.dashboard || loaded.dashboard };
+              await saveStateAsync(loaded);
+            }
+          } catch (e) {
+            console.error('Falha ao carregar do disco:', e);
+          }
+        }
+
+        // 2. Tenta o serviço de sincronização
+        if (loaded.notes.length === 0) {
+          try {
+            const response = await fetch('http://127.0.0.1:32147/sync/state', { signal: AbortSignal.timeout(2000) });
+            if (response.ok) {
+              const data = await response.json();
+              if (data && data.state && Array.isArray(data.state.notes) && data.state.notes.length > 0) {
+                loaded = { ...loaded, ...data.state };
+                await saveStateAsync(loaded);
+              }
+            }
+          } catch {
+            // Serviço indisponível
+          }
+        }
+
+        // 3. Se ainda vazio e no Electron, oferece restaurar backup automático
+        if (loaded.notes.length === 0 && window.electronAPI?.diskListBackups) {
+          try {
+            const backups = await window.electronAPI.diskListBackups();
+            if (backups.length > 0) {
+              const restore = confirm(
+                'Nenhuma nota foi encontrada, mas existem backups automáticos disponíveis.\n\nDeseja restaurar o backup mais recente?'
+              );
+              if (restore) {
+                const result = await window.electronAPI.diskRestoreBackup(backups[0].path);
+                if (result.success && result.state) {
+                  const restored = result.state as any;
+                  loaded = { ...loaded, notes: restored.notes || [], notebooks: restored.notebooks || [], tags: restored.tags || [], tasks: restored.tasks || [], settings: restored.settings || loaded.settings, dashboard: restored.dashboard || loaded.dashboard };
+                  await saveStateAsync(loaded);
+                }
+              }
+            }
+          } catch (e) {
+            console.error('Falha na recuperação de backup:', e);
+          }
+        }
+      }
+
       if (cancelled) return;
       setState(loaded);
       stateRef.current = loaded;
       navigationStackRef.current = [navigationEntry(loaded)];
       setIsLoading(false);
-      // Pede armazenamento persistente para o navegador não descartar os dados
       requestPersistentStorage();
     })();
     return () => { cancelled = true; };
@@ -79,7 +136,14 @@ export default function App() {
 
   const safeSave = useCallback((s: AppState) => {
     saveStateAsync(s)
-      .then(() => syncClientRef.current?.saveLocalChange(s))
+      .then(() => {
+        // Também salva em disco via Electron (dupla persistência)
+        if (window.electronAPI?.diskSaveState) {
+          const diskData = { notes: s.notes, notebooks: s.notebooks, tags: s.tags, tasks: s.tasks, settings: s.settings, dashboard: s.dashboard };
+          window.electronAPI.diskSaveState(diskData).catch((e) => console.error('Falha na persistência em disco:', e));
+        }
+        syncClientRef.current?.saveLocalChange(s);
+      })
       .catch((e) => {
         console.error('Não foi possível gravar o estado:', e);
       });

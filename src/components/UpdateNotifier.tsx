@@ -11,6 +11,11 @@ declare global {
       selectFolder: () => Promise<string | null>;
       saveFilesToFolder: (folder: string, files: { path: string; content: string }[]) => Promise<{ success: boolean; count?: number; error?: string }>;
       getBackupPath: () => Promise<string>;
+      openWebVersion: () => Promise<{ success: boolean; url: string }>;
+      diskSaveState: (state: unknown) => Promise<{ success: boolean; error?: string }>;
+      diskLoadState: () => Promise<{ state: unknown; source: string }>;
+      diskListBackups: () => Promise<{ file: string; path: string; size: number; date: string }[]>;
+      diskRestoreBackup: (backupPath: string) => Promise<{ success: boolean; state?: unknown; error?: string }>;
       onUpdateStatus: (callback: (message: string) => void) => () => void;
       onUpdateDownloaded: (callback: (version: string) => void) => () => void;
     };

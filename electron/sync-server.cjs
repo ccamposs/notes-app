@@ -1,6 +1,6 @@
 const http = require('http');
 const path = require('path');
-const Database = require('better-sqlite3');
+const fs = require('fs');
 const { WebSocketServer, WebSocket } = require('ws');
 
 const SYNC_HOST = '127.0.0.1';
@@ -8,7 +8,7 @@ const SYNC_PORT = 32147;
 const MAX_MESSAGE_BYTES = 100 * 1024 * 1024;
 
 function isAllowedOrigin(origin) {
-  if (!origin || origin === 'null') return true; // Electron carregado de file://
+  if (!origin || origin === 'null') return true;
   try {
     const url = new URL(origin);
     return (url.hostname === 'localhost' || url.hostname === '127.0.0.1') && url.protocol === 'http:';
@@ -32,66 +32,90 @@ function send(socket, payload) {
 }
 
 /**
- * Armazena o snapshot compartilhado no loopback. O servidor só escuta em
- * 127.0.0.1 e nunca expõe o banco para a rede local.
+ * Armazena o snapshot compartilhado em arquivo JSON local.
+ * Sem dependência de módulos nativos — funciona em qualquer plataforma.
  */
 function startLocalSyncServer(userDataPath) {
   return new Promise((resolve, reject) => {
-    const databasePath = path.join(userDataPath, 'notes-sync.sqlite');
-    const database = new Database(databasePath);
-    database.pragma('journal_mode = WAL');
-    database.pragma('busy_timeout = 5000');
-    database.exec(`
-      CREATE TABLE IF NOT EXISTS workspace_snapshot (
-        id INTEGER PRIMARY KEY CHECK (id = 1),
-        payload TEXT NOT NULL,
-        updated_at INTEGER NOT NULL,
-        source_client_id TEXT NOT NULL
-      );
-    `);
+    const snapshotPath = path.join(userDataPath, 'notes-sync.json');
 
-    const readSnapshot = database.prepare('SELECT payload, updated_at AS updatedAt, source_client_id AS sourceClientId FROM workspace_snapshot WHERE id = 1');
-    const writeSnapshot = database.prepare(`
-      INSERT INTO workspace_snapshot (id, payload, updated_at, source_client_id)
-      VALUES (1, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        payload = excluded.payload,
-        updated_at = excluded.updated_at,
-        source_client_id = excluded.source_client_id
-    `);
+    // Ler snapshot existente do disco
+    let currentSnapshot = null;
+    try {
+      if (fs.existsSync(snapshotPath)) {
+        const raw = fs.readFileSync(snapshotPath, 'utf-8');
+        const parsed = JSON.parse(raw);
+        if (parsed && isAppState(parsed.state)) {
+          currentSnapshot = parsed;
+        }
+      }
+    } catch (error) {
+      console.error('Erro ao ler snapshot de sincronização:', error.message);
+    }
+
+    function saveSnapshotToDisk(state, updatedAt, sourceClientId) {
+      const data = { state, updatedAt, sourceClientId };
+      try {
+        fs.writeFileSync(snapshotPath, JSON.stringify(data), 'utf-8');
+      } catch (error) {
+        console.error('Erro ao gravar snapshot de sincronização:', error.message);
+      }
+      currentSnapshot = data;
+      return data;
+    }
 
     const server = http.createServer((request, response) => {
-      if (request.url !== '/sync/health') {
-        response.writeHead(404);
+      // CORS para requisições do navegador
+      if (request.method === 'OPTIONS') {
+        response.writeHead(204, {
+          'Access-Control-Allow-Origin': '*',
+          'Access-Control-Allow-Methods': 'GET, OPTIONS',
+          'Access-Control-Allow-Headers': 'Content-Type',
+        });
         response.end();
         return;
       }
-      response.writeHead(200, {
-        'Content-Type': 'application/json',
-        'Cache-Control': 'no-store',
-        'Access-Control-Allow-Origin': '*',
-      });
-      response.end(JSON.stringify({ status: 'ok', port: SYNC_PORT }));
+
+      if (request.url === '/sync/health') {
+        response.writeHead(200, {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-store',
+          'Access-Control-Allow-Origin': '*',
+        });
+        response.end(JSON.stringify({ status: 'ok', port: SYNC_PORT }));
+        return;
+      }
+
+      // Endpoint HTTP para o renderer Electron ler o estado ao abrir
+      // (caso o WebSocket ainda não tenha conectado)
+      if (request.url === '/sync/state') {
+        response.writeHead(200, {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-store',
+          'Access-Control-Allow-Origin': '*',
+        });
+        if (currentSnapshot) {
+          response.end(JSON.stringify(currentSnapshot));
+        } else {
+          response.end(JSON.stringify({ state: null }));
+        }
+        return;
+      }
+
+      response.writeHead(404);
+      response.end();
     });
 
     const webSocketServer = new WebSocketServer({ noServer: true, maxPayload: MAX_MESSAGE_BYTES });
     const clients = new Set();
 
-    const broadcastSnapshot = (snapshot) => {
+    const broadcastSnapshot = (snapshot, excludeSocket) => {
       const message = JSON.stringify({ type: 'snapshot', ...snapshot });
       for (const client of clients) {
-        if (client.readyState === WebSocket.OPEN) client.send(message);
+        if (client !== excludeSocket && client.readyState === WebSocket.OPEN) {
+          client.send(message);
+        }
       }
-    };
-
-    const persistSnapshot = (state, updatedAt, sourceClientId) => {
-      const current = readSnapshot.get();
-      if (current && current.updatedAt > updatedAt) return { accepted: false, snapshot: current };
-      writeSnapshot.run(JSON.stringify(state), updatedAt, sourceClientId);
-      return {
-        accepted: true,
-        snapshot: { payload: JSON.stringify(state), updatedAt, sourceClientId },
-      };
     };
 
     webSocketServer.on('connection', (socket) => {
@@ -100,7 +124,7 @@ function startLocalSyncServer(userDataPath) {
 
       socket.on('message', (raw, isBinary) => {
         if (isBinary || raw.length > MAX_MESSAGE_BYTES) {
-          socket.close(1009, 'Mensagem de sincronização inválida');
+          socket.close(1009, 'Mensagem inválida');
           return;
         }
 
@@ -108,52 +132,73 @@ function startLocalSyncServer(userDataPath) {
         try {
           message = JSON.parse(raw.toString());
         } catch {
-          send(socket, { type: 'error', message: 'Mensagem de sincronização inválida.' });
+          send(socket, { type: 'error', message: 'JSON inválido.' });
           return;
         }
 
-        if (!message || typeof message.clientId !== 'string' || !isAppState(message.state)) {
-          send(socket, { type: 'error', message: 'Estado de sincronização inválido.' });
+        if (!message || typeof message.clientId !== 'string') {
+          send(socket, { type: 'error', message: 'clientId ausente.' });
           return;
         }
 
         const updatedAt = Number.isFinite(message.updatedAt) ? Math.max(0, Math.floor(message.updatedAt)) : 0;
         const isHello = message.type === 'hello';
         const isSave = message.type === 'save';
+
         if (!isHello && !isSave) {
-          send(socket, { type: 'error', message: 'Tipo de sincronização inválido.' });
+          send(socket, { type: 'error', message: 'Tipo inválido.' });
           return;
         }
 
-        const current = readSnapshot.get();
-        if (isHello && current) {
-          if (updatedAt > current.updatedAt) {
-            const result = persistSnapshot(message.state, updatedAt, message.clientId);
-            const snapshot = {
-              state: JSON.parse(result.snapshot.payload),
-              updatedAt: result.snapshot.updatedAt,
-              sourceClientId: result.snapshot.sourceClientId,
-            };
-            broadcastSnapshot(snapshot);
-          } else {
+        // Hello: cliente se conectou. Envia o estado mais recente ou aceita o dele.
+        if (isHello) {
+          if (currentSnapshot && currentSnapshot.updatedAt >= updatedAt) {
+            // Servidor tem dados mais recentes — envia para o cliente
             send(socket, {
               type: 'snapshot',
-              state: JSON.parse(current.payload),
-              updatedAt: current.updatedAt,
-              sourceClientId: current.sourceClientId,
+              state: currentSnapshot.state,
+              updatedAt: currentSnapshot.updatedAt,
+              sourceClientId: currentSnapshot.sourceClientId,
+            });
+          } else if (message.state && isAppState(message.state)) {
+            // Cliente tem dados mais recentes — salva e distribui
+            const snapshot = saveSnapshotToDisk(message.state, updatedAt, message.clientId);
+            send(socket, { type: 'snapshot', state: snapshot.state, updatedAt: snapshot.updatedAt, sourceClientId: snapshot.sourceClientId });
+            broadcastSnapshot({ state: snapshot.state, updatedAt: snapshot.updatedAt, sourceClientId: snapshot.sourceClientId }, socket);
+          } else if (currentSnapshot) {
+            send(socket, {
+              type: 'snapshot',
+              state: currentSnapshot.state,
+              updatedAt: currentSnapshot.updatedAt,
+              sourceClientId: currentSnapshot.sourceClientId,
             });
           }
+          // Se não há snapshot em lugar nenhum, não envia nada.
           return;
         }
 
-        const result = persistSnapshot(message.state, updatedAt, message.clientId);
-        const snapshot = {
-          state: JSON.parse(result.snapshot.payload),
-          updatedAt: result.snapshot.updatedAt,
-          sourceClientId: result.snapshot.sourceClientId,
-        };
-        if (result.accepted) broadcastSnapshot(snapshot);
-        else send(socket, { type: 'snapshot', ...snapshot });
+        // Save: cliente alterou dados.
+        if (!message.state || !isAppState(message.state)) {
+          send(socket, { type: 'error', message: 'Estado inválido.' });
+          return;
+        }
+
+        if (currentSnapshot && currentSnapshot.updatedAt > updatedAt) {
+          // Servidor tem dados mais recentes — rejeita e envia o atual
+          send(socket, {
+            type: 'snapshot',
+            state: currentSnapshot.state,
+            updatedAt: currentSnapshot.updatedAt,
+            sourceClientId: currentSnapshot.sourceClientId,
+          });
+          return;
+        }
+
+        const snapshot = saveSnapshotToDisk(message.state, updatedAt, message.clientId);
+        // Confirma ao remetente
+        send(socket, { type: 'snapshot', state: snapshot.state, updatedAt: snapshot.updatedAt, sourceClientId: snapshot.sourceClientId });
+        // Distribui para os demais
+        broadcastSnapshot({ state: snapshot.state, updatedAt: snapshot.updatedAt, sourceClientId: snapshot.sourceClientId }, socket);
       });
     });
 
@@ -168,7 +213,6 @@ function startLocalSyncServer(userDataPath) {
     });
 
     server.once('error', (error) => {
-      try { database.close(); } catch { /* banco ainda não foi aberto */ }
       reject(error);
     });
 
@@ -176,14 +220,11 @@ function startLocalSyncServer(userDataPath) {
       resolve({
         host: SYNC_HOST,
         port: SYNC_PORT,
-        databasePath,
+        snapshotPath,
         stop: () => new Promise((stopResolve) => {
           for (const client of clients) client.close(1001, 'Servidor encerrado');
           webSocketServer.close();
-          server.close(() => {
-            database.close();
-            stopResolve();
-          });
+          server.close(() => stopResolve());
         }),
       });
     });

@@ -11,6 +11,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   selectFolder: () => ipcRenderer.invoke('select-folder'),
   saveFilesToFolder: (folder, files) => ipcRenderer.invoke('save-files-to-folder', folder, files),
   getBackupPath: () => ipcRenderer.invoke('get-backup-path'),
+  openWebVersion: () => ipcRenderer.invoke('open-web-version'),
+
+  // Persistência segura em disco
+  diskSaveState: (state) => ipcRenderer.invoke('disk-save-state', state),
+  diskLoadState: () => ipcRenderer.invoke('disk-load-state'),
+  diskListBackups: () => ipcRenderer.invoke('disk-list-backups'),
+  diskRestoreBackup: (backupPath) => ipcRenderer.invoke('disk-restore-backup', backupPath),
 
   // Listen for update events
   onUpdateStatus: (callback) => {

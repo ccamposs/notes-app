@@ -1,14 +1,17 @@
-const { app, BrowserWindow, ipcMain, Notification, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, Notification, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const { autoUpdater } = require('electron-updater');
 const { startLocalSyncServer } = require('./sync-server.cjs');
+const { startWebServer } = require('./web-server.cjs');
+const dataPersistence = require('./data-persistence.cjs');
 
 // Disable hardware acceleration issues on some systems
 app.disableHardwareAcceleration();
 
 let mainWindow = null;
 let localSyncServer = null;
+let localWebServer = null;
 let updateCheckInterval = null;
 
 // Baixa atualizações automaticamente; a instalação só ocorre quando o usuário
@@ -63,13 +66,12 @@ function checkForUpdates() {
   if (!app.isPackaged) return Promise.resolve(null);
   return autoUpdater.checkForUpdates().catch((error) => {
     console.error('Não foi possível verificar atualizações:', error.message);
-    sendStatusToWindow('Não foi possível verificar atualizações agora.');
     return null;
   });
 }
 
 autoUpdater.on('checking-for-update', () => {
-  sendStatusToWindow('Verificando atualizações...');
+  // Silencioso — só exibe algo quando há atualização disponível.
 });
 
 autoUpdater.on('update-available', (info) => {
@@ -86,7 +88,7 @@ autoUpdater.on('update-available', (info) => {
 });
 
 autoUpdater.on('update-not-available', () => {
-  sendStatusToWindow('Você está na versão mais recente.');
+  // Silencioso — nada a informar quando já está atualizado.
 });
 
 autoUpdater.on('download-progress', (progress) => {
@@ -180,22 +182,70 @@ ipcMain.handle('get-backup-path', () => {
   return path.join(app.getPath('userData'), 'backups');
 });
 
+ipcMain.handle('open-web-version', () => {
+  const port = localWebServer ? localWebServer.port : 5173;
+  shell.openExternal(`http://localhost:${port}`);
+  return { success: true, url: `http://localhost:${port}` };
+});
+
+// ===== Persistência segura em disco =====
+
+ipcMain.handle('disk-save-state', (_, state) => {
+  return dataPersistence.saveState(state);
+});
+
+ipcMain.handle('disk-load-state', () => {
+  return dataPersistence.loadState();
+});
+
+ipcMain.handle('disk-list-backups', () => {
+  return dataPersistence.listBackups();
+});
+
+ipcMain.handle('disk-restore-backup', (_, backupPath) => {
+  try {
+    const data = fs.readFileSync(backupPath, 'utf-8');
+    if (!dataPersistence.isValidState(data)) {
+      return { success: false, error: 'Backup inválido ou corrompido.' };
+    }
+    return { success: true, state: JSON.parse(data) };
+  } catch (error) {
+    return { success: false, error: error.message };
+  }
+});
+
 // ===== App lifecycle =====
 app.whenReady().then(async () => {
+  // Inicializa persistência segura em disco
+  dataPersistence.init(app.getPath('userData'));
+  dataPersistence.startBackupTimer();
+
   try {
     localSyncServer = await startLocalSyncServer(app.getPath('userData'));
     console.log(`Serviço local de sincronização ativo em http://${localSyncServer.host}:${localSyncServer.port}`);
   } catch (error) {
-    // O app continua utilizável com o IndexedDB offline caso a porta esteja ocupada
-    // ou o banco local não possa ser iniciado.
     console.error('Não foi possível iniciar o serviço local de sincronização:', error.message);
   }
+
+  // Servidor web embutido: serve os arquivos compilados (dist/) para que
+  // o navegador possa acessar a versão web sem Vite ou dependências externas.
+  if (app.isPackaged) {
+    try {
+      localWebServer = await startWebServer(path.join(__dirname, '../dist'));
+      console.log(`Versão web disponível em http://localhost:${localWebServer.port}`);
+    } catch (error) {
+      console.error('Não foi possível iniciar o servidor web local:', error.message);
+    }
+  }
+
   createWindow();
 });
 
 app.on('before-quit', () => {
   if (updateCheckInterval) clearInterval(updateCheckInterval);
+  dataPersistence.stopAndFinalBackup();
   if (localSyncServer) localSyncServer.stop();
+  if (localWebServer) localWebServer.stop();
 });
 
 app.on('window-all-closed', () => {
