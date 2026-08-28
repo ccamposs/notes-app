@@ -108,7 +108,11 @@ export default function WhatsNew({ onClose }: Props) {
               <ReleaseChanges note={currentNote} />
             </section>
           ) : (
-            <p className="whatsnew-empty">Ainda não há novidades registradas para esta versão.</p>
+            <section className="whatsnew-current">
+              <div className="whatsnew-current-badge">Versão atual</div>
+              <h3>v{version}</h3>
+              <p className="whatsnew-summary">Você está na versão mais recente. As novidades detalhadas desta versão serão adicionadas em breve.</p>
+            </section>
           )}
 
           {previousNotes.length > 0 && (

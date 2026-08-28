@@ -750,7 +750,6 @@ export default function App() {
         if (cancelled || !installedVersion) return;
         const seen = localStorage.getItem(LAST_SEEN_VERSION_KEY);
         if (seen === installedVersion) return;
-        if (!findReleaseNote(installedVersion)) return;
 
         // Grava agora para não reabrir se o app for recarregado logo em seguida.
         localStorage.setItem(LAST_SEEN_VERSION_KEY, installedVersion);

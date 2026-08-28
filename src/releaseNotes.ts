@@ -32,6 +32,30 @@ export const CHANGE_KIND_ICONS: Record<ReleaseChangeKind, string> = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '1.3.9',
+    date: '2026-08-28',
+    title: 'Visual refinado',
+    summary: 'Modal de atualização simplificado e melhorias visuais no painel de novidades.',
+    changes: [
+      { kind: 'melhoria', text: 'Modal de atualização não lista mais mudanças da versão errada — só avisa e instala.' },
+      { kind: 'melhoria', text: 'Painel de novidades com animação de entrada mais suave e cards com hover elevado.' },
+      { kind: 'melhoria', text: 'Botão de atualizar com gradiente e efeito de profundidade.' },
+      { kind: 'melhoria', text: 'Card da versão atual com fundo em gradiente e brilho decorativo.' },
+    ],
+  },
+  {
+    version: '1.3.7',
+    date: '2026-08-28',
+    title: 'IA com busca vetorial',
+    summary: 'A pesquisa com IA agora usa embeddings para encontrar notas com muito mais precisão e velocidade.',
+    changes: [
+      { kind: 'melhoria', text: 'Busca em duas etapas: embedding encontra as notas relevantes, LLM gera a resposta.' },
+      { kind: 'melhoria', text: 'Cache de vetores: notas que não mudaram não são recalculadas.' },
+      { kind: 'melhoria', text: 'Funciona bem mesmo com centenas de notas (antes limitava a 50).' },
+      { kind: 'melhoria', text: 'Modelo padrão trocado para Qwen 2.5 3B — mais rápido e preciso em português.' },
+    ],
+  },
+  {
     version: '1.3.6',
     date: '2026-08-28',
     title: 'Proteção, IA e controle total',
@@ -166,18 +190,26 @@ export function normalizeVersion(version: string): string {
   return version.replace(/^v/, '').trim();
 }
 
+/**
+ * Busca a nota EXATA da versão instalada. Se não existir entrada para essa
+ * versão, retorna null — o componente mostra a versão real sem confundir
+ * com uma versão anterior. Isso evita o bug de exibir "v1.3.6" quando o
+ * app já está na v1.3.9.
+ */
 export function findReleaseNote(version: string): ReleaseNote | null {
   if (!version) return null;
   const target = normalizeVersion(version);
-  const exact = RELEASE_NOTES.find((n) => n.version === target);
-  if (exact) return exact;
-  return RELEASE_NOTES.find((n) => compareVersions(n.version, target) <= 0) || null;
+  return RELEASE_NOTES.find((n) => n.version === target) || null;
 }
 
+/**
+ * Lista versões anteriores à instalada. Se a versão instalada não tiver
+ * entrada, lista todas que são estritamente menores que ela.
+ */
 export function getPreviousReleaseNotes(version: string): ReleaseNote[] {
-  const current = findReleaseNote(version);
-  if (!current) return RELEASE_NOTES;
-  return RELEASE_NOTES.filter((n) => compareVersions(n.version, current.version) < 0);
+  if (!version) return RELEASE_NOTES;
+  const target = normalizeVersion(version);
+  return RELEASE_NOTES.filter((n) => compareVersions(n.version, target) < 0);
 }
 
 export function formatReleaseDate(date: string): string {
