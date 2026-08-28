@@ -1,16 +1,21 @@
 import Image from '@tiptap/extension-image';
-import { Plugin, PluginKey } from '@tiptap/pm/state';
-import { Decoration, DecorationSet } from '@tiptap/pm/view';
-
-const resizePluginKey = new PluginKey('imageResize');
 
 /**
  * Extensão de imagem avançada:
- * - Spoiler (blur)
- * - Redimensionamento por arraste nas bordas
- * - Marcações (tags visuais exclusivas para imagens)
- * - Largura/altura customizáveis
- * - Suporte a arrastar/soltar e colar múltiplas imagens (nativo do TipTap + handler)
+ * - Spoiler (ocultar/revelar) com bordas definidas
+ * - Proteção por senha (criptografia AES-GCM)
+ * - Tags de imagem exclusivas
+ * - Largura/altura customizáveis (redimensionamento)
+ * - Dica de senha
+ *
+ * Atributos salvos no HTML (persistem no backup):
+ * - data-spoiler: 'true'|'false' — imagem oculta
+ * - data-protected: 'true'|'false' — protegida por senha
+ * - data-password-hash: hash PBKDF2 para verificação
+ * - data-encrypted-src: conteúdo criptografado (quando protegida)
+ * - data-hint: dica de senha
+ * - data-labels: tags separadas por vírgula
+ * - width/height: dimensões customizadas
  */
 export const SpoilerImage = Image.extend({
   name: 'image',
@@ -22,6 +27,35 @@ export const SpoilerImage = Image.extend({
         default: 'false',
         parseHTML: (element) => element.getAttribute('data-spoiler') || 'false',
         renderHTML: (attributes) => ({ 'data-spoiler': attributes['data-spoiler'] || 'false' }),
+      },
+      'data-protected': {
+        default: 'false',
+        parseHTML: (element) => element.getAttribute('data-protected') || 'false',
+        renderHTML: (attributes) => ({ 'data-protected': attributes['data-protected'] || 'false' }),
+      },
+      'data-password-hash': {
+        default: '',
+        parseHTML: (element) => element.getAttribute('data-password-hash') || '',
+        renderHTML: (attributes) => {
+          if (!attributes['data-password-hash']) return {};
+          return { 'data-password-hash': attributes['data-password-hash'] };
+        },
+      },
+      'data-encrypted-src': {
+        default: '',
+        parseHTML: (element) => element.getAttribute('data-encrypted-src') || '',
+        renderHTML: (attributes) => {
+          if (!attributes['data-encrypted-src']) return {};
+          return { 'data-encrypted-src': attributes['data-encrypted-src'] };
+        },
+      },
+      'data-hint': {
+        default: '',
+        parseHTML: (element) => element.getAttribute('data-hint') || '',
+        renderHTML: (attributes) => {
+          if (!attributes['data-hint']) return {};
+          return { 'data-hint': attributes['data-hint'] };
+        },
       },
       'data-labels': {
         default: '',
@@ -48,90 +82,5 @@ export const SpoilerImage = Image.extend({
         },
       },
     };
-  },
-
-  addProseMirrorPlugins() {
-    const plugins = this.parent?.() || [];
-
-    // Plugin de redimensionamento interativo
-    plugins.push(
-      new Plugin({
-        key: resizePluginKey,
-        props: {
-          handleDOMEvents: {
-            mousedown: (view, event) => {
-              const target = event.target as HTMLElement;
-              if (!target.classList.contains('image-resize-handle')) return false;
-
-              event.preventDefault();
-              event.stopPropagation();
-
-              const imgWrapper = target.closest('.ProseMirror-image-wrapper') || target.parentElement;
-              const img = imgWrapper?.querySelector('img') as HTMLImageElement | null;
-              if (!img) return false;
-
-              const startX = event.clientX;
-              const startY = event.clientY;
-              const startWidth = img.offsetWidth;
-              const startHeight = img.offsetHeight;
-              const aspectRatio = startWidth / startHeight;
-
-              const onMouseMove = (e: MouseEvent) => {
-                const deltaX = e.clientX - startX;
-                const newWidth = Math.max(50, startWidth + deltaX);
-                const newHeight = Math.round(newWidth / aspectRatio);
-                img.style.width = `${newWidth}px`;
-                img.style.height = `${newHeight}px`;
-              };
-
-              const onMouseUp = (e: MouseEvent) => {
-                document.removeEventListener('mousemove', onMouseMove);
-                document.removeEventListener('mouseup', onMouseUp);
-
-                const deltaX = e.clientX - startX;
-                const newWidth = Math.max(50, startWidth + deltaX);
-                const newHeight = Math.round(newWidth / aspectRatio);
-
-                // Atualiza os atributos do nó no documento
-                const pos = view.posAtDOM(img, 0);
-                const node = view.state.doc.nodeAt(pos);
-                if (node && node.type.name === 'image') {
-                  const tr = view.state.tr.setNodeMarkup(pos, undefined, {
-                    ...node.attrs,
-                    width: `${newWidth}px`,
-                    height: `${newHeight}px`,
-                  });
-                  view.dispatch(tr);
-                }
-              };
-
-              document.addEventListener('mousemove', onMouseMove);
-              document.addEventListener('mouseup', onMouseUp);
-              return true;
-            },
-          },
-          decorations: (state) => {
-            const decorations: Decoration[] = [];
-            state.doc.descendants((node, pos) => {
-              if (node.type.name === 'image') {
-                decorations.push(
-                  Decoration.node(pos, pos + node.nodeSize, {
-                    class: 'ProseMirror-image-wrapper',
-                  })
-                );
-              }
-            });
-            return DecorationSet.create(state.doc, decorations);
-          },
-        },
-      })
-    );
-
-    return plugins;
-  },
-
-  // Suporte a arrastar e colar múltiplas imagens
-  addPasteRules() {
-    return [];
   },
 });

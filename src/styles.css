@@ -5287,3 +5287,321 @@ body {
   font-size: 11px;
   color: var(--text-secondary, #64748b);
 }
+
+/* Correção automática de busca */
+.search-suggestion {
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--text-secondary, #94a3b8);
+}
+.search-suggestion-link {
+  background: none;
+  border: none;
+  color: #3b82f6;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: underline;
+  padding: 0;
+}
+.search-suggestion-link:hover {
+  color: #60a5fa;
+}
+
+/* Spoiler de texto */
+.spoiler-text {
+  filter: blur(5px);
+  cursor: pointer;
+  border-radius: 3px;
+  padding: 0 2px;
+  transition: filter 0.3s;
+  user-select: none;
+}
+.spoiler-text.is-revealed {
+  filter: none;
+  user-select: auto;
+  background: rgba(139, 92, 246, 0.1);
+}
+.spoiler-text[data-protected="true"] {
+  position: relative;
+}
+
+/* Spoiler de imagem - bordas definidas */
+.ProseMirror img[data-spoiler="true"] {
+  filter: blur(20px) brightness(0.7);
+  cursor: pointer;
+  transition: filter 0.3s;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 2px solid var(--border-color, rgba(148, 163, 184, 0.3));
+  box-shadow: inset 0 0 0 2px var(--bg-primary, #0f172a);
+  clip-path: inset(0 round 8px);
+}
+.ProseMirror img[data-protected="true"][data-spoiler="true"] {
+  border-color: #f59e0b;
+}
+
+/* Modal de senha */
+.password-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 500;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  backdrop-filter: blur(2px);
+}
+.password-modal {
+  background: var(--bg-primary, #0f172a);
+  border: 1px solid var(--border-color, rgba(148, 163, 184, 0.3));
+  border-radius: 12px;
+  padding: 20px;
+  width: 90%;
+  max-width: 360px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+.password-modal-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.password-modal-header h3 { margin: 0; font-size: 15px; flex: 1; }
+.password-modal-close {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 4px;
+}
+.password-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 10px;
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+  border-radius: 6px;
+  margin-bottom: 12px;
+  font-size: 12px;
+  color: #f59e0b;
+}
+.password-field {
+  position: relative;
+  margin-bottom: 10px;
+}
+.password-field input {
+  width: 100%;
+  padding: 10px 38px 10px 12px;
+  border: 1px solid var(--border-color, rgba(148, 163, 184, 0.3));
+  border-radius: 8px;
+  background: var(--bg-secondary, #1e293b);
+  color: var(--text-primary, #f1f5f9);
+  font-size: 14px;
+}
+.password-field input:focus {
+  outline: none;
+  border-color: #3b82f6;
+}
+.password-toggle {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 4px;
+}
+.password-error {
+  color: #ef4444;
+  font-size: 12px;
+  margin: 0 0 10px;
+}
+.password-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+.password-btn-cancel {
+  padding: 8px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-size: 13px;
+}
+.password-btn-submit {
+  padding: 8px 14px;
+  border: none;
+  border-radius: 6px;
+  background: #3b82f6;
+  color: #fff;
+  cursor: pointer;
+  font-size: 13px;
+}
+.password-btn-submit:hover { background: #2563eb; }
+
+/* Botão spoiler no centro da imagem */
+.image-spoiler-btn {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  padding: 8px 16px;
+  border-radius: 20px;
+  background: rgba(0, 0, 0, 0.7);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  z-index: 10;
+}
+.image-spoiler-btn:hover { background: rgba(0, 0, 0, 0.85); }
+.image-spoiler-btn .lock-icon { color: #f59e0b; }
+
+/* Tabelas no editor */
+.ProseMirror table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 12px 0;
+  table-layout: fixed;
+  overflow: hidden;
+}
+.ProseMirror th,
+.ProseMirror td {
+  border: 1px solid var(--border-color, rgba(148, 163, 184, 0.3));
+  padding: 8px 10px;
+  vertical-align: top;
+  position: relative;
+  min-width: 60px;
+}
+.ProseMirror th {
+  background: var(--bg-secondary, #1e293b);
+  font-weight: 600;
+  font-size: 13px;
+}
+.ProseMirror td { font-size: 13px; }
+.ProseMirror .selectedCell { background: rgba(59, 130, 246, 0.1); }
+.ProseMirror .column-resize-handle {
+  position: absolute;
+  right: -2px;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  cursor: col-resize;
+  background: #3b82f6;
+  z-index: 10;
+}
+
+/* Checklist com progresso */
+.checklist-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  margin: 4px 0 8px;
+}
+.checklist-progress-bar {
+  flex: 1;
+  height: 6px;
+  background: var(--border-color, rgba(148, 163, 184, 0.2));
+  border-radius: 3px;
+  overflow: hidden;
+}
+.checklist-progress-fill {
+  height: 100%;
+  background: #22c55e;
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+.checklist-progress-label {
+  font-size: 11px;
+  color: var(--text-secondary, #64748b);
+  white-space: nowrap;
+}
+
+/* Lixeira - botões */
+.trash-actions {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.trash-actions button {
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color, rgba(148, 163, 184, 0.2));
+  background: var(--bg-secondary, #1e293b);
+  color: var(--text-secondary, #cbd5e1);
+  font-size: 12px;
+  cursor: pointer;
+}
+.trash-actions button.danger { color: #ef4444; border-color: rgba(239, 68, 68, 0.3); }
+.trash-actions button.danger:hover { background: rgba(239, 68, 68, 0.1); }
+.trash-days-left {
+  font-size: 10px;
+  color: var(--text-secondary, #64748b);
+  margin-top: 2px;
+}
+
+/* Sidebar seções colapsáveis */
+.nav-section-title-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  background: none;
+  border: none;
+  color: var(--text-secondary, #64748b);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 4px 0;
+  cursor: pointer;
+}
+.nav-section-title-btn:hover { color: var(--text-primary, #f1f5f9); }
+.nav-section-content.collapsed { display: none; }
+
+/* Ícone de caderno */
+.notebook-icon {
+  font-size: 14px;
+  margin-right: 4px;
+}
+
+/* Áudio na nota */
+.audio-clip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  margin: 8px 0;
+  background: var(--bg-secondary, #1e293b);
+  border-radius: 8px;
+  border: 1px solid var(--border-color, rgba(148, 163, 184, 0.15));
+}
+.audio-clip audio { height: 32px; flex: 1; }
+.audio-clip-date { font-size: 10px; color: var(--text-secondary, #64748b); }
+.audio-record-btn {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color, rgba(148, 163, 184, 0.2));
+  background: var(--bg-secondary, #1e293b);
+  color: var(--text-secondary, #cbd5e1);
+  font-size: 12px;
+  cursor: pointer;
+}
+.audio-record-btn.recording { color: #ef4444; border-color: rgba(239, 68, 68, 0.5); animation: pulse 1.5s infinite; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }

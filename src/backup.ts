@@ -129,6 +129,7 @@ export function exportStateAsJson(state: AppState): string {
     notes: state.notes,
     notebooks: state.notebooks,
     tags: state.tags,
+    imageTags: state.imageTags,
     tasks: state.tasks,
     settings: state.settings,
     dashboard: state.dashboard,
@@ -150,6 +151,7 @@ export function parseBackupJson(json: string): BackupRestoreData | null {
     const notes = data.notes as Note[];
     const notebooks = Array.isArray(data.notebooks) ? data.notebooks as AppState['notebooks'] : [];
     const tags = Array.isArray(data.tags) ? data.tags as AppState['tags'] : [];
+    const imageTags = Array.isArray((data as any).imageTags) ? (data as any).imageTags as AppState['imageTags'] : [];
     const ui = parseBackupUi(data.ui, notes, notebooks, tags);
     if (!ui) return null;
 
@@ -157,6 +159,7 @@ export function parseBackupJson(json: string): BackupRestoreData | null {
       notes,
       notebooks,
       tags,
+      imageTags,
       tasks: Array.isArray(data.tasks) ? data.tasks as AppState['tasks'] : [],
       settings: data.settings,
       dashboard: data.dashboard,
