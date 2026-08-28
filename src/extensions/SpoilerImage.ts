@@ -23,6 +23,35 @@ export const SpoilerImage = Image.extend({
         parseHTML: (element) => element.getAttribute('data-spoiler') || 'false',
         renderHTML: (attributes) => ({ 'data-spoiler': attributes['data-spoiler'] || 'false' }),
       },
+      'data-protected': {
+        default: 'false',
+        parseHTML: (element) => element.getAttribute('data-protected') || 'false',
+        renderHTML: (attributes) => ({ 'data-protected': attributes['data-protected'] || 'false' }),
+      },
+      'data-password-hash': {
+        default: '',
+        parseHTML: (element) => element.getAttribute('data-password-hash') || '',
+        renderHTML: (attributes) => {
+          if (!attributes['data-password-hash']) return {};
+          return { 'data-password-hash': attributes['data-password-hash'] };
+        },
+      },
+      'data-encrypted-src': {
+        default: '',
+        parseHTML: (element) => element.getAttribute('data-encrypted-src') || '',
+        renderHTML: (attributes) => {
+          if (!attributes['data-encrypted-src']) return {};
+          return { 'data-encrypted-src': attributes['data-encrypted-src'] };
+        },
+      },
+      'data-hint': {
+        default: '',
+        parseHTML: (element) => element.getAttribute('data-hint') || '',
+        renderHTML: (attributes) => {
+          if (!attributes['data-hint']) return {};
+          return { 'data-hint': attributes['data-hint'] };
+        },
+      },
       'data-labels': {
         default: '',
         parseHTML: (element) => element.getAttribute('data-labels') || '',
