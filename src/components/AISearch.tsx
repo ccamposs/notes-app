@@ -97,7 +97,9 @@ export default function AISearch({ notes, onClose, onSelectNote }: Props) {
             <AlertCircle size={20} />
             <div>
               <strong>Ollama não encontrado</strong>
-              <p>Para usar a pesquisa com IA, instale o Ollama em <a href="https://ollama.com" target="_blank" rel="noopener noreferrer">ollama.com</a> e execute um modelo (ex.: <code>ollama run llama3.2</code>).</p>
+              <p>Para usar a pesquisa com IA, instale o Ollama em <a href="https://ollama.com" target="_blank" rel="noopener noreferrer">ollama.com</a> e execute os modelos necessários:</p>
+              <p><code>ollama pull nomic-embed-text</code> (busca semântica)</p>
+              <p><code>ollama pull qwen2.5:3b</code> (gerar respostas)</p>
               <p>A IA roda 100% no seu computador, offline e privada.</p>
             </div>
           </div>
