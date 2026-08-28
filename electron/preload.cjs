@@ -38,6 +38,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   googleCalendarSync: (tasks, calendarId, syncAllActiveTasks) => ipcRenderer.invoke('google-calendar-sync', tasks, calendarId, syncAllActiveTasks),
   googleCalendarDeleteEvent: (calendarId, eventId, etag) => ipcRenderer.invoke('google-calendar-delete-event', calendarId, eventId, etag),
 
+  // Pesquisa com IA (Ollama local)
+  ollamaStatus: () => ipcRenderer.invoke('ollama-status'),
+  ollamaAsk: (question, notes, model) => ipcRenderer.invoke('ollama-ask', question, notes, model),
+
   // Listen for update events
   onUpdateStatus: (callback) => {
     const listener = (_, message) => callback(message);

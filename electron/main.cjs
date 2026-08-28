@@ -6,9 +6,27 @@ const { startLocalSyncServer } = require('./sync-server.cjs');
 const { startWebServer } = require('./web-server.cjs');
 const dataPersistence = require('./data-persistence.cjs');
 const { createGoogleCalendarService } = require('./google-calendar.cjs');
+const { isOllamaAvailable, askOllama } = require('./ollama.cjs');
 
 // Disable hardware acceleration issues on some systems
 app.disableHardwareAcceleration();
+
+// ===== Instância única =====
+// Impede que duas cópias do app rodem ao mesmo tempo, o que causava conflito
+// na atualização (o instalador não conseguia encerrar a segunda instância).
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  app.on('second-instance', () => {
+    // Uma segunda instância tentou abrir: foca a janela existente.
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    }
+  });
+}
 
 let mainWindow = null;
 let tray = null;
@@ -266,6 +284,10 @@ ipcMain.handle('google-calendar-disconnect', () => calendarService().disconnect(
 ipcMain.handle('google-calendar-list-calendars', () => calendarService().listCalendars());
 ipcMain.handle('google-calendar-sync', (_, tasks, calendarId, syncAllActiveTasks) => calendarService().sync(tasks, calendarId, syncAllActiveTasks === true));
 ipcMain.handle('google-calendar-delete-event', (_, calendarId, eventId, etag) => calendarService().deleteEvent(calendarId, eventId, etag));
+
+// ===== Pesquisa com IA (Ollama) =====
+ipcMain.handle('ollama-status', () => isOllamaAvailable());
+ipcMain.handle('ollama-ask', (_, question, notes, model) => askOllama(question, notes, model));
 
 // ===== Autostart (iniciar com Windows) =====
 

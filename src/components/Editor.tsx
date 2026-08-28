@@ -21,7 +21,10 @@ import { BookmarkMark } from '../extensions/BookmarkMark';
 import { CommentMark } from '../extensions/CommentMark';
 import { NoteLinkMark } from '../extensions/NoteLinkMark';
 import { SpoilerImage } from '../extensions/SpoilerImage';
+import { SpoilerText } from '../extensions/SpoilerText';
 import { Note, Tag, Notebook, Bookmark, CommentMessage, CommentThread, NoteVersion, StableLine } from '../types';
+import { encrypt, decrypt, hashPassword, verifyPassword } from '../crypto';
+import PasswordModal from './PasswordModal';
 import { reconcileLineStability } from '../store';
 import {
   Bold,
@@ -62,6 +65,7 @@ import {
   MessageSquare,
   Send,
   ChevronRight,
+  EyeOff,
 } from 'lucide-react';
 
 interface Props {
@@ -120,7 +124,7 @@ const COMMENT_COLORS = ['#60a5fa', '#22c55e', '#f59e0b', '#ef4444', '#a855f7', '
 const MONTH_NAMES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
 
 type SideTab = 'none' | 'history' | 'bookmarks' | 'comments';
-type FloatingToolbarItem = 'bold' | 'italic' | 'underline' | 'strike' | 'color' | 'textStyle' | 'lists' | 'quote' | 'link' | 'bookmark' | 'collapsible' | 'comment' | 'undo' | 'redo' | 'task';
+type FloatingToolbarItem = 'bold' | 'italic' | 'underline' | 'strike' | 'color' | 'textStyle' | 'lists' | 'quote' | 'link' | 'bookmark' | 'collapsible' | 'comment' | 'undo' | 'redo' | 'task' | 'spoiler';
 type FloatingToolbarMenu = 'color' | 'textStyle' | 'lists' | null;
 type PendingCommentThread = CommentThread & { from: number; to: number };
 
@@ -140,6 +144,7 @@ const FLOATING_TOOLBAR_ITEMS: { id: FloatingToolbarItem; label: string }[] = [
   { id: 'undo', label: 'Desfazer' },
   { id: 'redo', label: 'Refazer' },
   { id: 'task', label: 'Criar tarefa na nota' },
+  { id: 'spoiler', label: 'Ocultar texto (spoiler)' },
 ];
 
 const DEFAULT_FLOATING_TOOLBAR_ITEMS: FloatingToolbarItem[] = ['bold', 'italic', 'underline', 'strike', 'color', 'textStyle', 'lists', 'link', 'comment'];
@@ -343,6 +348,8 @@ export default function Editor({
   const [saved, setSaved] = useState(false);
   const [showInlineTask, setShowInlineTask] = useState(false);
   const [imageContextMenu, setImageContextMenu] = useState<{ x: number; y: number; pos: number } | null>(null);
+  const [imagePasswordModal, setImagePasswordModal] = useState<{ mode: 'create' | 'unlock'; pos: number; hint?: string } | null>(null);
+  const [imagePasswordError, setImagePasswordError] = useState('');
   const [inlineTaskTitle, setInlineTaskTitle] = useState('');
   const [inlineTaskDueDate, setInlineTaskDueDate] = useState<string | null>(null);
   const [inlineTaskDueTime, setInlineTaskDueTime] = useState<string | null>(null);
@@ -388,6 +395,7 @@ export default function Editor({
       CollapsibleNode,
       BookmarkMark,
       CommentMark,
+      SpoilerText,
       ...(noteLinksEnabled ? [NoteLinkMark] : []),
     ],
     content: note.content,
@@ -768,6 +776,73 @@ export default function Editor({
     queueImageDocumentPersist();
     setImageContextMenu(null);
   }, [editor, queueImageDocumentPersist]);
+
+  const handleProtectImage = useCallback((pos: number) => {
+    if (!editor) return;
+    const node = editor.state.doc.nodeAt(pos);
+    if (!node || node.type.name !== 'image') return;
+
+    if (node.attrs['data-protected'] === 'true') {
+      // Já protegida: pede senha para desproteger
+      setImagePasswordModal({ mode: 'unlock', pos, hint: node.attrs['data-hint'] || undefined });
+    } else {
+      // Proteger com senha
+      setImagePasswordModal({ mode: 'create', pos });
+    }
+    setImageContextMenu(null);
+  }, [editor]);
+
+  const handleImagePasswordSubmit = useCallback(async (password: string, hint?: string) => {
+    if (!editor || !imagePasswordModal) return;
+    const { mode, pos } = imagePasswordModal;
+    const node = editor.state.doc.nodeAt(pos);
+    if (!node || node.type.name !== 'image') return;
+
+    if (mode === 'create') {
+      // Criptografa o src da imagem
+      const hash = await hashPassword(password);
+      const encryptedSrc = await encrypt(node.attrs.src, password);
+      skipNextUpdate.current = true;
+      const tr = editor.state.tr.setNodeMarkup(pos, undefined, {
+        ...node.attrs,
+        'data-protected': 'true',
+        'data-password-hash': hash,
+        'data-encrypted-src': encryptedSrc,
+        'data-hint': hint || '',
+        'data-spoiler': 'true',
+        src: 'data:image/svg+xml;base64,' + btoa('<svg xmlns="http://www.w3.org/2000/svg" width="200" height="150"><rect width="200" height="150" fill="#1e293b"/><text x="50%" y="50%" text-anchor="middle" dy=".35em" fill="#64748b" font-size="12">Protegida</text></svg>'),
+      });
+      editor.view.dispatch(tr);
+      queueImageDocumentPersist();
+    } else {
+      // Desproteger: verifica senha e restaura o src
+      const isValid = await verifyPassword(password, node.attrs['data-password-hash']);
+      if (!isValid) {
+        setImagePasswordError('Senha incorreta.');
+        return;
+      }
+      const originalSrc = await decrypt(node.attrs['data-encrypted-src'], password);
+      if (!originalSrc) {
+        setImagePasswordError('Não foi possível descriptografar.');
+        return;
+      }
+      skipNextUpdate.current = true;
+      const tr = editor.state.tr.setNodeMarkup(pos, undefined, {
+        ...node.attrs,
+        'data-protected': 'false',
+        'data-password-hash': '',
+        'data-encrypted-src': '',
+        'data-hint': '',
+        'data-spoiler': 'false',
+        src: originalSrc,
+      });
+      editor.view.dispatch(tr);
+      queueImageDocumentPersist();
+    }
+
+    setImagePasswordModal(null);
+    setImagePasswordError('');
+  }, [editor, imagePasswordModal, queueImageDocumentPersist]);
 
   useEffect(() => {
     const container = editorContentRef.current;
@@ -1172,6 +1247,14 @@ export default function Editor({
     undo: { label: 'Desfazer', icon: <Undo size={17} />, active: false, run: () => editor?.chain().focus().undo().run() },
     redo: { label: 'Refazer', icon: <Redo size={17} />, active: false, run: () => editor?.chain().focus().redo().run() },
     task: { label: 'Criar tarefa na nota', icon: <ListTodo size={17} />, active: false, run: handleOpenInlineTask },
+    spoiler: { label: 'Ocultar texto', icon: <EyeOff size={17} />, active: editor?.isActive('spoilerText'), run: () => {
+      if (!editor) return;
+      if (editor.isActive('spoilerText')) {
+        editor.chain().focus().unsetMark('spoilerText').run();
+      } else {
+        editor.chain().focus().setMark('spoilerText').run();
+      }
+    }},
   };
 
   const activeCommentThread = commentThreads.find((thread) => thread.id === activeCommentThreadId) || pendingCommentThread;
@@ -1600,19 +1683,29 @@ export default function Editor({
             />
           )}
 
-          {/* Menu de contexto de imagem (spoiler, marcações, copiar) */}
+          {/* Menu de contexto de imagem */}
           {imageContextMenu && (
             <div className="image-context-menu" style={{ top: imageContextMenu.y, left: imageContextMenu.x }}>
               {(() => {
                 const node = editor?.state.doc.nodeAt(imageContextMenu.pos);
                 const isSpoiler = node?.attrs['data-spoiler'] === 'true';
+                const isProtected = node?.attrs['data-protected'] === 'true';
                 const currentLabels = (node?.attrs['data-labels'] || '').split(',').filter(Boolean);
                 return (
                   <>
-                    <button onClick={() => toggleImageSpoiler(imageContextMenu.pos, !isSpoiler)}>
-                      {isSpoiler ? 'Revelar imagem' : 'Ocultar imagem (spoiler)'}
+                    {!isProtected && (
+                      <button onClick={() => toggleImageSpoiler(imageContextMenu.pos, !isSpoiler)}>
+                        {isSpoiler ? 'Revelar imagem' : 'Ocultar imagem'}
+                      </button>
+                    )}
+                    {!isProtected && isSpoiler && (
+                      <button onClick={() => toggleImageSpoiler(imageContextMenu.pos, false)}>Manter imagem visível</button>
+                    )}
+                    {!isProtected && <button onClick={hideAllImages}>Ocultar todas as imagens</button>}
+                    <div className="image-context-separator" />
+                    <button onClick={() => handleProtectImage(imageContextMenu.pos)}>
+                      {isProtected ? 'Remover proteção por senha' : 'Proteger com senha'}
                     </button>
-                    <button onClick={hideAllImages}>Ocultar todas as imagens</button>
                     <div className="image-context-separator" />
                     <button onClick={() => {
                       const label = prompt('Nome da marcação:', currentLabels.join(', '));
@@ -1631,25 +1724,41 @@ export default function Editor({
                       {currentLabels.length > 0 ? `Marcações: ${currentLabels.join(', ')}` : 'Adicionar marcação'}
                     </button>
                     <div className="image-context-separator" />
-                    <button onClick={() => {
-                      const src = node?.attrs.src;
-                      if (src) navigator.clipboard.writeText(src);
-                      setImageContextMenu(null);
-                    }}>Copiar imagem</button>
-                    <button onClick={() => {
-                      const src = node?.attrs.src;
-                      if (src) {
-                        const a = document.createElement('a');
-                        a.href = src;
-                        a.download = `imagem-${Date.now()}.png`;
-                        a.click();
-                      }
-                      setImageContextMenu(null);
-                    }}>Salvar imagem como...</button>
+                    {!isProtected && (
+                      <button onClick={() => {
+                        const src = node?.attrs.src;
+                        if (src) navigator.clipboard.writeText(src);
+                        setImageContextMenu(null);
+                      }}>Copiar imagem</button>
+                    )}
+                    {!isProtected && (
+                      <button onClick={() => {
+                        const src = node?.attrs.src;
+                        if (src) {
+                          const a = document.createElement('a');
+                          a.href = src;
+                          a.download = `imagem-${Date.now()}.png`;
+                          a.click();
+                        }
+                        setImageContextMenu(null);
+                      }}>Salvar imagem como...</button>
+                    )}
                   </>
                 );
               })()}
             </div>
+          )}
+
+          {/* Modal de senha para proteção de imagem */}
+          {imagePasswordModal && (
+            <PasswordModal
+              mode={imagePasswordModal.mode}
+              hint={imagePasswordModal.hint}
+              title={imagePasswordModal.mode === 'create' ? 'Proteger imagem com senha' : 'Desbloquear imagem'}
+              onSubmit={handleImagePasswordSubmit}
+              onCancel={() => { setImagePasswordModal(null); setImagePasswordError(''); }}
+              error={imagePasswordError}
+            />
           )}
 
           {activeCommentThread && commentPopoverPosition && createPortal(

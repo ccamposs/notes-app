@@ -2,11 +2,14 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Sparkles, X } from 'lucide-react';
 import {
   CHANGE_KIND_LABELS,
+  CHANGE_KIND_ICONS,
   RELEASE_NOTES,
   findReleaseNote,
   formatReleaseDate,
   getPreviousReleaseNotes,
+  groupChangesByKind,
   type ReleaseNote,
+  type ReleaseChangeKind,
 } from '../releaseNotes';
 
 interface Props {
@@ -14,15 +17,32 @@ interface Props {
 }
 
 function ReleaseChanges({ note }: { note: ReleaseNote }) {
+  const groups = groupChangesByKind(note.changes);
+  const kindOrder: ReleaseChangeKind[] = ['novo', 'melhoria', 'correcao'];
+
   return (
-    <ul className="release-changes">
-      {note.changes.map((change, index) => (
-        <li key={index}>
-          <span className={`release-tag release-tag-${change.kind}`}>{CHANGE_KIND_LABELS[change.kind]}</span>
-          <span>{change.text}</span>
-        </li>
-      ))}
-    </ul>
+    <div className="release-changes-grouped">
+      {kindOrder.map((kind) => {
+        const items = groups[kind];
+        if (items.length === 0) return null;
+        return (
+          <div key={kind} className="release-group">
+            <h5 className="release-group-title">
+              <span className="release-group-icon">{CHANGE_KIND_ICONS[kind]}</span>
+              {CHANGE_KIND_LABELS[kind]}
+              <span className="release-group-count">{items.length}</span>
+            </h5>
+            <ul className="release-changes">
+              {items.map((change, index) => (
+                <li key={index}>
+                  <span>{change.text}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 

@@ -29,8 +29,11 @@ import WordCount from './components/WordCount';
 import NoteSummary from './components/NoteSummary';
 import Gallery from './components/Gallery';
 import WhatsNew from './components/WhatsNew';
+import AISearch from './components/AISearch';
 import { RELEASE_NOTES, findReleaseNote } from './releaseNotes';
 import { LocalSyncClient, SyncStatus as SyncStatusData } from './sync';
+import { hashPassword, verifyPassword } from './crypto';
+import PasswordModal from './components/PasswordModal';
 
 const LAST_SEEN_VERSION_KEY = 'notes-app-last-seen-version';
 
@@ -69,6 +72,10 @@ export default function App() {
   const [showTemplates, setShowTemplates] = useState(false);
   const [showWhatsNew, setShowWhatsNew] = useState(false);
   const [hasUnseenWhatsNew, setHasUnseenWhatsNew] = useState(false);
+  const [unlockedIds, setUnlockedIds] = useState<Set<string>>(new Set());
+  const [lockModal, setLockModal] = useState<{ mode: 'create' | 'unlock'; targetId: string; targetType: 'note' | 'notebook'; hint?: string } | null>(null);
+  const [lockError, setLockError] = useState('');
+  const [showAISearch, setShowAISearch] = useState(false);
   const [galleryReturnView, setGalleryReturnView] = useState<{ viewMode: ViewMode; notebookId: string | null; noteId: string | null } | null>(null);
   const saveTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveInProgressRef = useRef(false);
@@ -380,6 +387,9 @@ export default function App() {
       } else if (e.ctrlKey && e.key === 't' && !e.shiftKey) {
         e.preventDefault();
         if (state.settings.templatesEnabled) setShowTemplates(true);
+      } else if (e.ctrlKey && e.shiftKey && e.key === 'A') {
+        e.preventDefault();
+        setShowAISearch(true);
       } else if (e.ctrlKey && e.key === '1' && !isInput) {
         e.preventDefault();
         navigate((s) => ({ ...s, viewMode: 'dashboard' }));
@@ -431,7 +441,16 @@ export default function App() {
   const openNotes = openNoteIds
     .map((id) => state.notes.find((note) => note.id === id && note.status !== 'deleted'))
     .filter((note): note is Note => Boolean(note));
-  const filteredNotes = filterNotes(state.notes, state);
+  const filteredNotes = filterNotes(state.notes, state).filter((note) => {
+    // Notas bloqueadas são invisíveis até autenticar na sessão
+    if (note.isLocked && !unlockedIds.has(note.id)) return false;
+    // Notas de cadernos bloqueados também ficam invisíveis
+    if (note.notebookId) {
+      const nb = state.notebooks.find((n) => n.id === note.notebookId);
+      if (nb?.isLocked && !unlockedIds.has(nb.id)) return false;
+    }
+    return true;
+  });
   const commentSearchMatches = (() => {
     const query = state.viewMode === 'search' ? state.searchQuery.trim().toLowerCase() : '';
     if (!query) return {} as Record<string, { threadId: string; text: string }[]>;
@@ -897,6 +916,80 @@ export default function App() {
       notebooks: s.notebooks.filter((nb) => nb.id !== id),
       notes: s.notes.map((n) => (n.notebookId === id ? { ...n, notebookId: null } : n)),
     }));
+  }, [persistFn]);
+
+  // ===== Bloqueio de notas e cadernos =====
+  const handleLockNote = useCallback((noteId: string) => {
+    const note = stateRef.current.notes.find((n) => n.id === noteId);
+    if (!note) return;
+    if (note.isLocked) {
+      // Já bloqueada: pede senha para desbloquear
+      setLockModal({ mode: 'unlock', targetId: noteId, targetType: 'note', hint: note.lockHint || undefined });
+    } else {
+      setLockModal({ mode: 'create', targetId: noteId, targetType: 'note' });
+    }
+  }, []);
+
+  const handleLockNotebook = useCallback((notebookId: string) => {
+    const nb = stateRef.current.notebooks.find((n) => n.id === notebookId);
+    if (!nb) return;
+    if (nb.isLocked) {
+      setLockModal({ mode: 'unlock', targetId: notebookId, targetType: 'notebook', hint: nb.lockHint || undefined });
+    } else {
+      setLockModal({ mode: 'create', targetId: notebookId, targetType: 'notebook' });
+    }
+  }, []);
+
+  const handleLockSubmit = useCallback(async (password: string, hint?: string) => {
+    if (!lockModal) return;
+    const { mode, targetId, targetType } = lockModal;
+
+    if (mode === 'create') {
+      const hash = await hashPassword(password);
+      if (targetType === 'note') {
+        persistFn((s) => ({
+          ...s,
+          notes: s.notes.map((n) => n.id === targetId ? { ...n, isLocked: true, lockPasswordHash: hash, lockHint: hint || '' } : n),
+        }));
+      } else {
+        persistFn((s) => ({
+          ...s,
+          notebooks: s.notebooks.map((nb) => nb.id === targetId ? { ...nb, isLocked: true, lockPasswordHash: hash, lockHint: hint || '' } : nb),
+        }));
+      }
+      setLockModal(null);
+      setLockError('');
+    } else {
+      // Desbloquear na sessão
+      const item = targetType === 'note'
+        ? stateRef.current.notes.find((n) => n.id === targetId)
+        : stateRef.current.notebooks.find((nb) => nb.id === targetId);
+      if (!item || !item.lockPasswordHash) return;
+
+      const isValid = await verifyPassword(password, item.lockPasswordHash);
+      if (!isValid) {
+        setLockError('Senha incorreta.');
+        return;
+      }
+      setUnlockedIds((prev) => new Set([...prev, targetId]));
+      setLockModal(null);
+      setLockError('');
+    }
+  }, [lockModal, persistFn]);
+
+  const handleRemoveLock = useCallback((targetId: string, targetType: 'note' | 'notebook') => {
+    if (targetType === 'note') {
+      persistFn((s) => ({
+        ...s,
+        notes: s.notes.map((n) => n.id === targetId ? { ...n, isLocked: false, lockPasswordHash: '', lockHint: '' } : n),
+      }));
+    } else {
+      persistFn((s) => ({
+        ...s,
+        notebooks: s.notebooks.map((nb) => nb.id === targetId ? { ...nb, isLocked: false, lockPasswordHash: '', lockHint: '' } : nb),
+      }));
+    }
+    setUnlockedIds((prev) => { const next = new Set(prev); next.delete(targetId); return next; });
   }, [persistFn]);
 
   const handleCreateTag = useCallback((name: string) => {
@@ -1422,6 +1515,25 @@ export default function App() {
         <NoteTemplates onSelect={handleCreateNoteFromTemplate} onClose={() => setShowTemplates(false)} />
       )}
       {showWhatsNew && <WhatsNew onClose={handleCloseWhatsNew} />}
+      {lockModal && (
+        <PasswordModal
+          mode={lockModal.mode}
+          hint={lockModal.hint}
+          title={lockModal.mode === 'create'
+            ? `Bloquear ${lockModal.targetType === 'note' ? 'nota' : 'caderno'}`
+            : `Desbloquear ${lockModal.targetType === 'note' ? 'nota' : 'caderno'}`}
+          onSubmit={handleLockSubmit}
+          onCancel={() => { setLockModal(null); setLockError(''); }}
+          error={lockError}
+        />
+      )}
+      {showAISearch && (
+        <AISearch
+          notes={state.notes.filter((n) => n.status === 'active' && (!n.isLocked || unlockedIds.has(n.id)))}
+          onSelectNote={handleSelectNote}
+          onClose={() => setShowAISearch(false)}
+        />
+      )}
       <Sidebar
         state={state}
         onSetView={handleSetView}
@@ -1445,6 +1557,9 @@ export default function App() {
         dragDropEnabled={state.settings.dragDropEnabled}
         onOpenWhatsNew={() => setShowWhatsNew(true)}
         hasUnseenWhatsNew={hasUnseenWhatsNew}
+        onLockNotebook={handleLockNotebook}
+        unlockedIds={unlockedIds}
+        onOpenAISearch={() => setShowAISearch(true)}
       />
       {showDashboard ? (
         <Dashboard

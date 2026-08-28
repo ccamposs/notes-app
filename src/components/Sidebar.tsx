@@ -23,6 +23,7 @@ import {
   Globe,
   Images,
   Sparkles,
+  Lock,
 } from 'lucide-react';
 
 interface ContextMenuState {
@@ -55,6 +56,9 @@ interface Props {
   dragDropEnabled?: boolean;
   onOpenWhatsNew: () => void;
   hasUnseenWhatsNew?: boolean;
+  onLockNotebook?: (notebookId: string) => void;
+  unlockedIds?: Set<string>;
+  onOpenAISearch?: () => void;
 }
 
 export default function Sidebar({
@@ -80,6 +84,9 @@ export default function Sidebar({
   dragDropEnabled = true,
   onOpenWhatsNew,
   hasUnseenWhatsNew = false,
+  onLockNotebook,
+  unlockedIds = new Set(),
+  onOpenAISearch,
 }: Props) {
   const [showNotebookInput, setShowNotebookInput] = useState(false);
   const [showTagInput, setShowTagInput] = useState(false);
@@ -256,7 +263,7 @@ export default function Sidebar({
 
         <div className="nav-section">
           <div className="nav-section-title">Cadernos</div>
-          {state.notebooks.map((nb) => {
+          {state.notebooks.filter((nb) => !nb.isLocked || unlockedIds.has(nb.id)).map((nb) => {
             const isExpanded = expandedNotebooks.has(nb.id);
             const notebookNotes = activeNotes.filter((n) => n.notebookId === nb.id);
             return (
@@ -345,6 +352,25 @@ export default function Sidebar({
               <Plus size={14} /> Novo caderno
             </button>
           )}
+          {state.notebooks.filter((nb) => nb.isLocked && !unlockedIds.has(nb.id)).length > 0 && (
+            <div className="nav-item nav-item-compact" style={{ opacity: 0.6 }}>
+              <Lock size={14} className="nav-item-icon" />
+              <span>{state.notebooks.filter((nb) => nb.isLocked && !unlockedIds.has(nb.id)).length} caderno(s) bloqueado(s)</span>
+              {onLockNotebook && (
+                <button
+                  type="button"
+                  className="nav-item-action-btn"
+                  title="Desbloquear"
+                  onClick={() => {
+                    const locked = state.notebooks.find((nb) => nb.isLocked && !unlockedIds.has(nb.id));
+                    if (locked) onLockNotebook(locked.id);
+                  }}
+                >
+                  <Lock size={12} />
+                </button>
+              )}
+            </div>
+          )}
         </div>
 
         <div className="nav-section">
@@ -411,6 +437,18 @@ export default function Sidebar({
           <span>Novidades</span>
           {hasUnseenWhatsNew && <span className="nav-item-dot" aria-hidden="true" />}
         </button>
+        {onOpenAISearch && (
+          <button
+            type="button"
+            className="nav-item"
+            onClick={onOpenAISearch}
+            aria-label="Pesquisar com IA"
+            title="Pesquisar com IA (Ctrl+Shift+A)"
+          >
+            <Sparkles className="nav-item-icon" />
+            <span>Pesquisar com IA</span>
+          </button>
+        )}
         <button
           type="button"
           className={`nav-item ${state.viewMode === 'settings' ? 'active' : ''}`}
@@ -435,6 +473,11 @@ export default function Sidebar({
               <>
                 <button onClick={() => { onCreateNote(); setContextMenu(null); }}>Adicionar nova nota</button>
                 <button onClick={() => { setEditingNotebook(contextMenu.id); setEditName(nb?.name || ''); setContextMenu(null); }}>Renomear caderno</button>
+                {onLockNotebook && (
+                  <button onClick={() => { onLockNotebook(contextMenu.id); setContextMenu(null); }}>
+                    {nb?.isLocked ? 'Desbloquear caderno' : 'Bloquear caderno com senha'}
+                  </button>
+                )}
                 <div className="sidebar-context-divider" />
                 <button className="danger" onClick={() => handleDeleteNotebookConfirm(contextMenu.id)}>Excluir caderno</button>
               </>

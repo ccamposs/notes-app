@@ -30,6 +30,8 @@ declare global {
       googleCalendarDeleteEvent: (calendarId: string, eventId: string, etag?: string | null) => Promise<{ success: boolean; error?: string }>;
       onUpdateStatus: (callback: (message: string) => void) => () => void;
       onUpdateDownloaded: (callback: (version: string) => void) => () => void;
+      ollamaStatus: () => Promise<{ available: boolean; models: string[] }>;
+      ollamaAsk: (question: string, notes: unknown[], model?: string) => Promise<{ success: boolean; response?: string; relevantNoteIds?: string[]; error?: string }>;
     };
   }
 }
