@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Download, X, RefreshCw, Sparkles } from 'lucide-react';
 import type { Task } from '../types';
-import { CHANGE_KIND_LABELS, findReleaseNote } from '../releaseNotes';
 
 declare global {
   interface Window {
@@ -126,15 +125,14 @@ export default function UpdateNotifier() {
   if (!window.electronAPI) return null;
 
   if (updateReady && !dismissed) {
-    const note = findReleaseNote(newVersion);
     return (
       <div className="update-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="update-modal-title">
         <div className="update-modal">
           <div className="update-modal-header">
             <span className="update-modal-icon" aria-hidden="true"><Sparkles size={20} /></span>
             <div>
-              <h2 id="update-modal-title">Atualização pronta</h2>
-              <p>A versão {newVersion} foi baixada e está pronta para instalar.</p>
+              <h2 id="update-modal-title">Nova versão disponível</h2>
+              <p>A versão <strong>{newVersion}</strong> foi baixada e está pronta.</p>
             </div>
             <button
               type="button"
@@ -147,31 +145,25 @@ export default function UpdateNotifier() {
             </button>
           </div>
 
-          {note && (
-            <div className="update-modal-body">
-              <h3>{note.title}</h3>
-              <ul className="update-modal-changes">
-                {note.changes.map((change, index) => (
-                  <li key={index}>
-                    <span className={`release-tag release-tag-${change.kind}`}>{CHANGE_KIND_LABELS[change.kind]}</span>
-                    <span>{change.text}</span>
-                  </li>
-                ))}
-              </ul>
+          <div className="update-modal-body">
+            <div className="update-modal-illustration" aria-hidden="true">
+              <Sparkles size={32} />
             </div>
-          )}
+            <p className="update-modal-info">O app vai fechar, instalar a atualização e reabrir automaticamente.</p>
+            <p className="update-modal-subinfo">Ao reabrir você verá o resumo completo das novidades.</p>
+          </div>
 
           {installError && <p className="update-modal-error">{installError}</p>}
 
           <div className="update-modal-footer">
-            <span className="update-modal-hint">O app fecha, instala e abre novamente.</span>
+            <span className="update-modal-hint">Suas notas serão salvas antes de fechar.</span>
             <div className="update-modal-actions">
               <button type="button" className="update-modal-btn-secondary" onClick={() => setDismissed(true)} disabled={installing}>
                 Depois
               </button>
               <button type="button" ref={confirmButtonRef} className="update-modal-btn-primary" onClick={handleRestart} disabled={installing}>
                 <RefreshCw size={14} className={installing ? 'is-spinning' : undefined} />
-                {installing ? 'Atualizando...' : 'Atualizar e reiniciar'}
+                {installing ? 'Instalando...' : 'Atualizar agora'}
               </button>
             </div>
           </div>
