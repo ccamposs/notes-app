@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { AppSettings, AppState } from '../types';
 import { requestNotificationPermission } from '../notifications';
+import { RELEASE_NOTES } from '../releaseNotes';
 import { exportStateAsJson, parseBackupJson, exportAsMarkdown, exportAsEnex, exportAsHtmlBundle, importMarkdownFiles, importEnexFile, importHtmlFiles, downloadTextFile, ExportFile, ImportedNote, type BackupRestoreData } from '../backup';
 import { getStorageEstimate, formatBytes, StorageEstimate } from '../storage';
 import { getStateSizeBytes } from '../store';
@@ -30,6 +31,7 @@ export default function Settings({ settings, onUpdateSettings, appState, onResto
   const [calendarChoices, setCalendarChoices] = useState<CalendarChoice[]>([]);
   const [calendarMessage, setCalendarMessage] = useState('');
   const [calendarBusy, setCalendarBusy] = useState(false);
+  const [appVersion, setAppVersion] = useState(RELEASE_NOTES[0]?.version || '');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const importMdRef = useRef<HTMLInputElement>(null);
   const importEnexRef = useRef<HTMLInputElement>(null);
@@ -46,6 +48,14 @@ export default function Settings({ settings, onUpdateSettings, appState, onResto
     const interval = setInterval(refresh, 15000);
     return () => { cancelled = true; clearInterval(interval); };
   }, [appState.notes.length, importProgress.active]);
+
+  useEffect(() => {
+    let cancelled = false;
+    window.electronAPI?.getAppVersion?.()
+      .then((value) => { if (!cancelled && value) setAppVersion(value); })
+      .catch(() => undefined);
+    return () => { cancelled = true; };
+  }, []);
 
   const dataSizeBytes = getStateSizeBytes(appState);
 
@@ -616,7 +626,7 @@ export default function Settings({ settings, onUpdateSettings, appState, onResto
 
       <section className="settings-section settings-info-section">
         <div className="settings-section-heading"><Volume2 size={18} /><div><h2>Sobre</h2><p>Informações do aplicativo.</p></div></div>
-        <span className="settings-version">Notes App • versão 1.0.0</span>
+        <span className="settings-version">Notes App • versão {appVersion}</span>
       </section>
     </main>
   );

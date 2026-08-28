@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   diskLoadState: () => ipcRenderer.invoke('disk-load-state'),
   diskListBackups: () => ipcRenderer.invoke('disk-list-backups'),
   diskRestoreBackup: (backupPath) => ipcRenderer.invoke('disk-restore-backup', backupPath),
+  getPendingUpdate: () => ipcRenderer.invoke('get-pending-update'),
   onFlushBeforeQuit: (callback) => {
     const listener = () => callback();
     ipcRenderer.on('flush-before-quit', listener);

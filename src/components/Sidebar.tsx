@@ -22,6 +22,7 @@ import {
   Clock,
   Globe,
   Images,
+  Sparkles,
 } from 'lucide-react';
 
 interface ContextMenuState {
@@ -52,6 +53,8 @@ interface Props {
   onDuplicateNote: (id: string) => void;
   onMoveNote?: (noteId: string, notebookId: string | null) => void;
   dragDropEnabled?: boolean;
+  onOpenWhatsNew: () => void;
+  hasUnseenWhatsNew?: boolean;
 }
 
 export default function Sidebar({
@@ -75,6 +78,8 @@ export default function Sidebar({
   onDuplicateNote,
   onMoveNote,
   dragDropEnabled = true,
+  onOpenWhatsNew,
+  hasUnseenWhatsNew = false,
 }: Props) {
   const [showNotebookInput, setShowNotebookInput] = useState(false);
   const [showTagInput, setShowTagInput] = useState(false);
@@ -395,6 +400,17 @@ export default function Sidebar({
             <span>Abrir no navegador</span>
           </button>
         )}
+        <button
+          type="button"
+          className="nav-item"
+          onClick={onOpenWhatsNew}
+          aria-label={hasUnseenWhatsNew ? 'Novidades da versão, há itens não vistos' : 'Ver novidades da versão'}
+          title="Novidades"
+        >
+          <Sparkles className="nav-item-icon" />
+          <span>Novidades</span>
+          {hasUnseenWhatsNew && <span className="nav-item-dot" aria-hidden="true" />}
+        </button>
         <button
           type="button"
           className={`nav-item ${state.viewMode === 'settings' ? 'active' : ''}`}

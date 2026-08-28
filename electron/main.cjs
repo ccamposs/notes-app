@@ -18,7 +18,13 @@ let updateCheckInterval = null;
 let googleCalendarService = null;
 let isQuitting = false;
 let shutdownInProgress = false;
+let readyToExit = false;
 let rendererFlushComplete = null;
+let updateInstallPending = false;
+let downloadedUpdateVersion = null;
+
+const SHUTDOWN_TIMEOUT_MS = 10000;
+const INSTALLER_HANDOFF_TIMEOUT_MS = 4000;
 
 // Baixa atualizações automaticamente; a instalação só ocorre quando o usuário
 // reinicia pelo aviso ou ao encerrar o aplicativo.
@@ -109,6 +115,7 @@ autoUpdater.on('download-progress', (progress) => {
 });
 
 autoUpdater.on('update-downloaded', (info) => {
+  downloadedUpdateVersion = info.version;
   sendStatusToWindow(`Atualização v${info.version} pronta! Reinicie para aplicar.`);
 
   if (Notification.isSupported()) {
@@ -118,7 +125,12 @@ autoUpdater.on('update-downloaded', (info) => {
       icon: path.join(__dirname, '../public/icon.ico'),
     });
     notification.on('click', () => {
-      autoUpdater.quitAndInstall();
+      // Traz a janela e mostra o aviso dentro do app, onde o usuário confirma.
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.show();
+        mainWindow.focus();
+      }
+      requestUpdateInstall();
     });
     notification.show();
   }
@@ -147,9 +159,21 @@ ipcMain.handle('check-for-updates', async () => {
   return 'Verificando atualizações...';
 });
 
-ipcMain.handle('restart-and-update', () => {
-  if (app.isPackaged) autoUpdater.quitAndInstall();
-});
+// Marca a instalação e inicia o encerramento. O instalador só é acionado
+// depois que os dados forem gravados, no fim do fluxo de before-quit.
+function requestUpdateInstall() {
+  if (!app.isPackaged) return { success: false, error: 'Atualização disponível apenas no aplicativo instalado.' };
+  if (!downloadedUpdateVersion) return { success: false, error: 'Nenhuma atualização foi baixada ainda.' };
+  if (updateInstallPending) return { success: true, version: downloadedUpdateVersion };
+
+  updateInstallPending = true;
+  app.quit();
+  return { success: true, version: downloadedUpdateVersion };
+}
+
+ipcMain.handle('restart-and-update', () => requestUpdateInstall());
+
+ipcMain.handle('get-pending-update', () => ({ version: downloadedUpdateVersion }));
 
 ipcMain.handle('get-app-version', () => {
   return app.getVersion();
@@ -358,31 +382,68 @@ app.whenReady().then(async () => {
   createWindow();
 });
 
+// Grava tudo o que está pendente antes de encerrar. Nunca lança: o app precisa
+// terminar de sair, senão o instalador da atualização ficaria esperando para sempre.
+async function drainBeforeQuit() {
+  const flushed = await requestRendererFlush();
+  if (!flushed) {
+    console.warn('A janela não confirmou a gravação final no tempo esperado; seguindo com o que já foi salvo.');
+  }
+
+  const results = await Promise.allSettled([
+    dataPersistence.stopAndFinalBackup(),
+    localSyncServer?.stop(),
+    localWebServer?.stop(),
+  ]);
+  for (const result of results) {
+    if (result.status === 'rejected') console.error('Falha ao finalizar a persistência:', result.reason);
+  }
+}
+
+// Segue adiante se uma etapa demorar demais: é melhor encerrar com o que já foi
+// gravado do que deixar o app (e o instalador) esperando indefinidamente.
+function withTimeout(promise, milliseconds, label) {
+  return Promise.race([
+    promise,
+    new Promise((resolve) => setTimeout(() => {
+      console.warn(`${label} passou de ${milliseconds}ms; seguindo com o encerramento.`);
+      resolve();
+    }, milliseconds)),
+  ]);
+}
+
 app.on('before-quit', (event) => {
+  // Liberação final: a drenagem terminou e o encerramento já foi decidido.
+  if (readyToExit) return;
+
+  // Qualquer pedido de saída espera a gravação terminar, venha do botão de
+  // atualizar, da bandeja ou do próprio instalador.
+  event.preventDefault();
   if (shutdownInProgress) return;
 
-  // As gravações agora são assíncronas. Impede a saída uma vez para drenar
-  // persistência, snapshot e backup antes de encerrar definitivamente.
-  event.preventDefault();
   isQuitting = true;
   shutdownInProgress = true;
   if (updateCheckInterval) clearInterval(updateCheckInterval);
 
-  requestRendererFlush()
-    .then((flushed) => {
-      if (!flushed) throw new Error('O renderer não confirmou a gravação final. O aplicativo permanecerá aberto para proteger os dados.');
-      return Promise.all([
-        dataPersistence.stopAndFinalBackup(),
-        localSyncServer?.stop(),
-        localWebServer?.stop(),
-      ]);
-    })
-    .then(() => app.quit())
-    .catch((error) => {
-      shutdownInProgress = false;
-      isQuitting = false;
-      console.error('Falha ao finalizar a persistência:', error);
-    });
+  void withTimeout(drainBeforeQuit(), SHUTDOWN_TIMEOUT_MS, 'A gravação final').finally(() => {
+    readyToExit = true;
+
+    if (!updateInstallPending) {
+      app.quit();
+      return;
+    }
+
+    // Dados salvos: agora o instalador pode substituir os arquivos e reabrir o app.
+    try {
+      autoUpdater.quitAndInstall(true, true);
+    } catch (error) {
+      console.error('Não foi possível iniciar o instalador:', error.message);
+    }
+
+    // Se o instalador não assumir o encerramento, sai de qualquer forma: a
+    // atualização ainda é aplicada na saída e o app não fica travado.
+    setTimeout(() => app.quit(), INSTALLER_HANDOFF_TIMEOUT_MS);
+  });
 });
 
 app.on('window-all-closed', () => {

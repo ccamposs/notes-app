@@ -28,7 +28,11 @@ import NoteTemplates from './components/NoteTemplates';
 import WordCount from './components/WordCount';
 import NoteSummary from './components/NoteSummary';
 import Gallery from './components/Gallery';
+import WhatsNew from './components/WhatsNew';
+import { RELEASE_NOTES, findReleaseNote } from './releaseNotes';
 import { LocalSyncClient, SyncStatus as SyncStatusData } from './sync';
+
+const LAST_SEEN_VERSION_KEY = 'notes-app-last-seen-version';
 
 type NavigationEntry = Pick<AppState, 'viewMode' | 'activeNotebookId' | 'activeTagId' | 'selectedNoteId' | 'searchQuery'>;
 type NoteUpdateOptions = { preservePreviousVersion?: boolean };
@@ -63,6 +67,8 @@ export default function App() {
   const [focusCommentId, setFocusCommentId] = useState<string | null>(null);
   const [showQuickNote, setShowQuickNote] = useState(false);
   const [showTemplates, setShowTemplates] = useState(false);
+  const [showWhatsNew, setShowWhatsNew] = useState(false);
+  const [hasUnseenWhatsNew, setHasUnseenWhatsNew] = useState(false);
   const [galleryReturnView, setGalleryReturnView] = useState<{ viewMode: ViewMode; notebookId: string | null; noteId: string | null } | null>(null);
   const saveTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   const saveInProgressRef = useRef(false);
@@ -711,6 +717,41 @@ export default function App() {
       };
     });
   }, [persistFn]);
+
+  // Depois de atualizar, mostra uma vez o resumo das melhorias da nova versão.
+  useEffect(() => {
+    if (isLoading) return;
+    let cancelled = false;
+    const resolveVersion = window.electronAPI?.getAppVersion
+      ? window.electronAPI.getAppVersion()
+      : Promise.resolve(RELEASE_NOTES[0]?.version || '');
+
+    resolveVersion
+      .then((installedVersion) => {
+        if (cancelled || !installedVersion) return;
+        const seen = localStorage.getItem(LAST_SEEN_VERSION_KEY);
+        if (seen === installedVersion) return;
+        if (!findReleaseNote(installedVersion)) return;
+
+        // Grava agora para não reabrir se o app for recarregado logo em seguida.
+        localStorage.setItem(LAST_SEEN_VERSION_KEY, installedVersion);
+
+        // Instalação nova (sem notas e sem registro anterior) não recebe o
+        // resumo: ele existe para quem acabou de receber uma atualização.
+        if (!seen && stateRef.current.notes.length === 0) return;
+
+        setHasUnseenWhatsNew(true);
+        setShowWhatsNew(true);
+      })
+      .catch(() => undefined);
+
+    return () => { cancelled = true; };
+  }, [isLoading]);
+
+  const handleCloseWhatsNew = useCallback(() => {
+    setShowWhatsNew(false);
+    setHasUnseenWhatsNew(false);
+  }, []);
 
   const handleSetView = useCallback((viewMode: ViewMode, notebookId?: string, tagId?: string) => {
     navigate((s) => ({
@@ -1380,6 +1421,7 @@ export default function App() {
       {showTemplates && state.settings.templatesEnabled && (
         <NoteTemplates onSelect={handleCreateNoteFromTemplate} onClose={() => setShowTemplates(false)} />
       )}
+      {showWhatsNew && <WhatsNew onClose={handleCloseWhatsNew} />}
       <Sidebar
         state={state}
         onSetView={handleSetView}
@@ -1401,6 +1443,8 @@ export default function App() {
         onDuplicateNote={handleDuplicateNote}
         onMoveNote={handleMoveNote}
         dragDropEnabled={state.settings.dragDropEnabled}
+        onOpenWhatsNew={() => setShowWhatsNew(true)}
+        hasUnseenWhatsNew={hasUnseenWhatsNew}
       />
       {showDashboard ? (
         <Dashboard
