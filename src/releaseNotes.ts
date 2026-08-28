@@ -32,6 +32,26 @@ export const CHANGE_KIND_ICONS: Record<ReleaseChangeKind, string> = {
 
 export const RELEASE_NOTES: ReleaseNote[] = [
   {
+    version: '1.3.11',
+    date: '2026-08-28',
+    title: 'Novidades sempre visíveis',
+    summary: 'O painel de novidades agora mostra corretamente as melhorias de cada versão, sem atrasos.',
+    changes: [
+      { kind: 'correcao', text: 'O resumo das novidades aparece imediatamente após atualizar — não mostra mais "em breve".' },
+      { kind: 'correcao', text: 'Nunca mais exibe uma versão antiga como se fosse a atual.' },
+    ],
+  },
+  {
+    version: '1.3.10',
+    date: '2026-08-28',
+    title: 'Versão real no painel',
+    summary: 'O painel de novidades passou a mostrar a versão real instalada em vez de uma anterior.',
+    changes: [
+      { kind: 'correcao', text: 'Painel de novidades não confunde mais a versão exibida com uma versão antiga.' },
+      { kind: 'correcao', text: 'Abertura automática funciona mesmo quando a versão não tem entrada detalhada.' },
+    ],
+  },
+  {
     version: '1.3.9',
     date: '2026-08-28',
     title: 'Visual refinado',
