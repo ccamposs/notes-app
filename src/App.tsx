@@ -741,6 +741,8 @@ export default function App() {
       notes: data.notes || s.notes,
       notebooks: data.notebooks || s.notebooks,
       tags: data.tags || s.tags,
+      // As marcações de imagem também voltam do backup, junto das notas.
+      imageTags: data.imageTags || s.imageTags,
       tasks: data.tasks || s.tasks,
       settings: data.settings || s.settings,
       dashboard: data.dashboard || s.dashboard,
