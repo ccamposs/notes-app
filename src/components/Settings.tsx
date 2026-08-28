@@ -4,7 +4,7 @@ import { requestNotificationPermission } from '../notifications';
 import { exportStateAsJson, parseBackupJson, exportAsMarkdown, exportAsEnex, exportAsHtmlBundle, importMarkdownFiles, importEnexFile, importHtmlFiles, downloadTextFile, ExportFile, ImportedNote, type BackupRestoreData } from '../backup';
 import { getStorageEstimate, formatBytes, StorageEstimate } from '../storage';
 import { getStateSizeBytes } from '../store';
-import { Bell, Check, Database, Download, FileText, FolderDown, FolderUp, HardDrive, Image, Monitor, Moon, Settings as SettingsIcon, Sun, Upload, Volume2, Zap } from 'lucide-react';
+import { Bell, CalendarDays, Check, Database, Download, FileText, FolderDown, FolderUp, HardDrive, Image, Monitor, Moon, RefreshCw, Settings as SettingsIcon, Sun, Upload, Volume2, Zap } from 'lucide-react';
 
 interface Props {
   settings: AppSettings;
@@ -12,9 +12,13 @@ interface Props {
   appState: AppState;
   onRestoreBackup: (data: BackupRestoreData) => void;
   onImportNotes: (notes: ImportedNote[]) => void;
+  onSyncCalendar: () => Promise<{ synced: boolean; conflicts: number }>;
 }
 
-export default function Settings({ settings, onUpdateSettings, appState, onRestoreBackup, onImportNotes }: Props) {
+type CalendarConnectionStatus = { available: boolean; connected: boolean; clientIdConfigured: boolean };
+type CalendarChoice = { id: string; summary: string; primary: boolean };
+
+export default function Settings({ settings, onUpdateSettings, appState, onRestoreBackup, onImportNotes, onSyncCalendar }: Props) {
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission | 'unsupported'>(
     'Notification' in window ? Notification.permission : 'unsupported',
   );
@@ -22,6 +26,10 @@ export default function Settings({ settings, onUpdateSettings, appState, onResto
   const [progress, setProgress] = useState<{ active: boolean; percent: number; label: string }>({ active: false, percent: 0, label: '' });
   const [importProgress, setImportProgress] = useState<{ active: boolean; percent: number; label: string }>({ active: false, percent: 0, label: '' });
   const [storage, setStorage] = useState<StorageEstimate | null>(null);
+  const [calendarConnection, setCalendarConnection] = useState<CalendarConnectionStatus | null>(null);
+  const [calendarChoices, setCalendarChoices] = useState<CalendarChoice[]>([]);
+  const [calendarMessage, setCalendarMessage] = useState('');
+  const [calendarBusy, setCalendarBusy] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const importMdRef = useRef<HTMLInputElement>(null);
   const importEnexRef = useRef<HTMLInputElement>(null);
@@ -64,6 +72,83 @@ export default function Settings({ settings, onUpdateSettings, appState, onResto
   const requestDesktopPermission = async () => {
     const permission = await requestNotificationPermission();
     setNotificationPermission(permission);
+  };
+
+  const refreshCalendarConnection = async () => {
+    const api = window.electronAPI;
+    if (!api?.googleCalendarStatus) return;
+    try {
+      const status = await api.googleCalendarStatus();
+      setCalendarConnection(status);
+      if (status.connected) {
+        const choices = await api.googleCalendarListCalendars();
+        setCalendarChoices(choices);
+      }
+    } catch (error) {
+      setCalendarMessage(error instanceof Error ? error.message : 'Não foi possível verificar a conexão com o Google Calendar.');
+    }
+  };
+
+  useEffect(() => { void refreshCalendarConnection(); }, []);
+
+  const handleCalendarConnect = async () => {
+    const api = window.electronAPI;
+    if (!api?.googleCalendarConnect) {
+      setCalendarMessage('A conexão com o Google Calendar está disponível somente no aplicativo para Windows.');
+      return;
+    }
+    if (!settings.googleCalendarClientId.trim()) {
+      setCalendarMessage('Cole primeiro o ID de cliente criado para o aplicativo no Google Cloud.');
+      return;
+    }
+    setCalendarBusy(true);
+    setCalendarMessage('Abrindo o Google para você autorizar a conexão...');
+    try {
+      const status = await api.googleCalendarConnect(settings.googleCalendarClientId.trim());
+      const choices = await api.googleCalendarListCalendars();
+      const selected = choices.find((calendar) => calendar.id === settings.googleCalendarId)
+        || choices.find((calendar) => calendar.primary)
+        || choices[0];
+      setCalendarConnection(status);
+      setCalendarChoices(choices);
+      onUpdateSettings({ googleCalendarEnabled: Boolean(selected), googleCalendarId: selected?.id || 'primary' });
+      setCalendarMessage(selected ? `Conexão concluída. Os lembretes serão enviados para “${selected.summary}”.` : 'Conta conectada, mas nenhum calendário editável foi encontrado.');
+    } catch (error) {
+      setCalendarMessage(error instanceof Error ? error.message : 'Não foi possível conectar sua conta Google.');
+    } finally {
+      setCalendarBusy(false);
+    }
+  };
+
+  const handleCalendarDisconnect = async () => {
+    const api = window.electronAPI;
+    if (!api?.googleCalendarDisconnect) return;
+    setCalendarBusy(true);
+    try {
+      const status = await api.googleCalendarDisconnect();
+      setCalendarConnection(status);
+      setCalendarChoices([]);
+      onUpdateSettings({ googleCalendarEnabled: false });
+      setCalendarMessage('A conta Google foi desconectada deste computador. Seus eventos já existentes não foram apagados.');
+    } catch (error) {
+      setCalendarMessage(error instanceof Error ? error.message : 'Não foi possível desconectar a conta Google.');
+    } finally {
+      setCalendarBusy(false);
+    }
+  };
+
+  const handleCalendarSync = async () => {
+    setCalendarBusy(true);
+    try {
+      const result = await onSyncCalendar();
+      setCalendarMessage(result.conflicts > 0
+        ? `${result.conflicts} lembrete(s) removido(s) no Google foram preservados no app e precisam ser revisados.`
+        : result.synced ? 'Lembretes sincronizados com o Google Calendar.' : 'Nada foi sincronizado. Verifique se a conexão e o calendário estão ativos.');
+    } catch (error) {
+      setCalendarMessage(error instanceof Error ? error.message : 'Não foi possível sincronizar os lembretes.');
+    } finally {
+      setCalendarBusy(false);
+    }
   };
 
   const handleBackupDownload = async () => {
@@ -307,6 +392,69 @@ export default function Settings({ settings, onUpdateSettings, appState, onResto
           <div><strong>Som dos lembretes</strong><span>Reproduz o som escolhido para cada tarefa.</span></div>
           <input type="checkbox" checked={settings.soundNotifications} disabled={!settings.remindersEnabled} onChange={(e) => onUpdateSettings({ soundNotifications: e.target.checked })} />
         </label>
+      </section>
+
+      <section className="settings-section">
+        <div className="settings-section-heading"><CalendarDays size={18} /><div><h2>Google Calendar</h2><p>Envie lembretes escolhidos para a sua agenda e receba mudanças feitas por lá.</p></div></div>
+        {!window.electronAPI?.googleCalendarStatus ? (
+          <p className="settings-backup-hint">A conexão com o Google Calendar é configurada no aplicativo para Windows.</p>
+        ) : (
+          <>
+            <label className="settings-select-label">ID de conexão do Google
+              <input
+                className="settings-select"
+                value={settings.googleCalendarClientId}
+                onChange={(event) => onUpdateSettings({ googleCalendarClientId: event.target.value.trim() })}
+                placeholder="...apps.googleusercontent.com"
+                spellCheck={false}
+              />
+            </label>
+            <p className="settings-backup-hint">Este identificador não dá acesso às suas notas. A autorização da sua conta fica protegida apenas neste computador e não entra no backup.</p>
+
+            {calendarConnection?.connected ? (
+              <div className="settings-backup-actions">
+                <button className="settings-action-btn" onClick={handleCalendarDisconnect} disabled={calendarBusy}>Desconectar conta</button>
+                <button className="settings-action-btn" onClick={handleCalendarSync} disabled={calendarBusy || !settings.googleCalendarEnabled}>
+                  <RefreshCw size={16} /> Sincronizar agora
+                </button>
+              </div>
+            ) : (
+              <button className="settings-action-btn" onClick={handleCalendarConnect} disabled={calendarBusy || calendarConnection?.available === false}>
+                <CalendarDays size={16} /> {calendarBusy ? 'Aguardando autorização...' : 'Conectar conta Google'}
+              </button>
+            )}
+
+            {calendarConnection?.connected && (
+              <>
+                <label className="settings-select-label">Calendário usado para os lembretes
+                  <select
+                    className="settings-select"
+                    value={settings.googleCalendarId}
+                    onChange={(event) => onUpdateSettings({ googleCalendarId: event.target.value })}
+                  >
+                    {calendarChoices.map((calendar) => <option key={calendar.id} value={calendar.id}>{calendar.primary ? `${calendar.summary} (principal)` : calendar.summary}</option>)}
+                  </select>
+                </label>
+                <label className="settings-toggle-row">
+                  <div><strong>Ativar conexão com o Google Calendar</strong><span>Permite que o app envie e receba atualizações dos lembretes selecionados.</span></div>
+                  <input type="checkbox" checked={settings.googleCalendarEnabled} onChange={(event) => onUpdateSettings({ googleCalendarEnabled: event.target.checked })} />
+                </label>
+                <label className="settings-toggle-row">
+                  <div><strong>Sincronizar todas as tarefas pendentes</strong><span>Enquanto estiver ligado, envia todas as tarefas pendentes, mesmo as que não foram marcadas individualmente.</span></div>
+                  <input type="checkbox" checked={settings.googleCalendarSyncAllActiveTasks} disabled={!settings.googleCalendarEnabled} onChange={(event) => onUpdateSettings({ googleCalendarSyncAllActiveTasks: event.target.checked })} />
+                </label>
+                <label className="settings-toggle-row">
+                  <div><strong>Sincronizar novas tarefas por padrão</strong><span>Ao criar um novo lembrete, a opção individual de sincronizar com a agenda já vem marcada.</span></div>
+                  <input type="checkbox" checked={settings.googleCalendarSyncNewTasks} disabled={!settings.googleCalendarEnabled} onChange={(event) => onUpdateSettings({ googleCalendarSyncNewTasks: event.target.checked })} />
+                </label>
+                {appState.tasks.some((task) => task.calendarSyncState === 'remote-deleted') && (
+                  <p className="settings-backup-hint">Há lembretes apagados no Google Calendar que foram preservados aqui. Edite cada tarefa para recriá-la na agenda ou exclua-a se ela não for mais necessária.</p>
+                )}
+              </>
+            )}
+            {calendarMessage && <p className="settings-export-status">{calendarMessage}</p>}
+          </>
+        )}
       </section>
 
       <section className="settings-section">

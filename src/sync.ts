@@ -10,7 +10,7 @@ export interface SyncStatus {
 }
 
 interface SyncMessage {
-  type: 'snapshot' | 'error';
+  type: 'snapshot' | 'ack' | 'error';
   state?: AppState;
   updatedAt?: number;
   sourceClientId?: string;
@@ -52,6 +52,7 @@ export class LocalSyncClient {
   private lastSyncedAt: number = getTimestamp(LAST_SYNC_KEY);
   private statusListener: (status: SyncStatus) => void = () => undefined;
   private remoteStateListener: (state: AppState) => void = () => undefined;
+  private syncWaiters: { updatedAt: number; resolve: () => void }[] = [];
 
   start(initialState: AppState, onRemoteState: (state: AppState) => void, onStatus: (status: SyncStatus) => void): void {
     this.currentState = initialState;
@@ -80,12 +81,29 @@ export class LocalSyncClient {
     this.connect();
   }
 
+  waitForPendingSync(): Promise<void> {
+    if (this.changedAt <= this.lastSyncedAt || this.socket?.readyState !== WebSocket.OPEN) return Promise.resolve();
+    const updatedAt = this.changedAt;
+    return new Promise((resolve) => this.syncWaiters.push({ updatedAt, resolve }));
+  }
+
+  private resolveSyncedWaiters(): void {
+    const remaining: typeof this.syncWaiters = [];
+    for (const waiter of this.syncWaiters) {
+      if (waiter.updatedAt <= this.lastSyncedAt) waiter.resolve();
+      else remaining.push(waiter);
+    }
+    this.syncWaiters = remaining;
+  }
+
   stop(): void {
     this.stopped = true;
     if (this.reconnectTimer !== null) window.clearTimeout(this.reconnectTimer);
     this.reconnectTimer = null;
     this.socket?.close(1000, 'Cliente encerrado');
     this.socket = null;
+    for (const waiter of this.syncWaiters) waiter.resolve();
+    this.syncWaiters = [];
   }
 
   private connect(): void {
@@ -94,12 +112,13 @@ export class LocalSyncClient {
 
     this.publishStatus('connecting', this.changedAt > this.lastSyncedAt ? 1 : 0);
     const socket = new WebSocket(ENDPOINT);
-    const stateSnapshot = this.currentState;
     this.socket = socket;
 
     socket.onopen = () => {
       this.reconnectAttempt = 0;
-      this.send({ type: 'hello', state: stateSnapshot, updatedAt: this.changedAt });
+      // O estado pode ter mudado enquanto o WebSocket estava conectando.
+      // Monte o hello agora para nunca combinar conteúdo antigo e timestamp novo.
+      if (this.currentState) this.send({ type: 'hello', state: this.currentState, updatedAt: this.changedAt });
       this.publishStatus('syncing', this.changedAt > this.lastSyncedAt ? 1 : 0);
     };
 
@@ -127,6 +146,15 @@ export class LocalSyncClient {
       return;
     }
 
+    if (message.type === 'ack' && Number.isFinite(message.updatedAt)) {
+      this.lastSyncedAt = Math.max(this.lastSyncedAt, message.updatedAt!);
+      localStorage.setItem(LAST_SYNC_KEY, String(this.lastSyncedAt));
+      const hasNewerChange = this.changedAt > this.lastSyncedAt;
+      this.resolveSyncedWaiters();
+      this.publishStatus(hasNewerChange ? 'syncing' : 'synced', hasNewerChange ? 1 : 0);
+      return;
+    }
+
     if (message.type !== 'snapshot' || !message.state || !Number.isFinite(message.updatedAt)) {
       this.publishStatus('error', 0, 'Snapshot de sincronização inválido.');
       return;
@@ -142,6 +170,7 @@ export class LocalSyncClient {
 
     this.lastSyncedAt = timestamp;
     localStorage.setItem(LAST_SYNC_KEY, String(timestamp));
+    this.resolveSyncedWaiters();
     this.publishStatus('synced', 0);
   }
 

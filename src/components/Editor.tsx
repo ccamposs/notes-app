@@ -12,11 +12,16 @@ import TextStyle from '@tiptap/extension-text-style';
 import TextAlign from '@tiptap/extension-text-align';
 import Highlight from '@tiptap/extension-highlight';
 import Image from '@tiptap/extension-image';
+import { Table } from '@tiptap/extension-table';
+import { TableRow } from '@tiptap/extension-table-row';
+import { TableCell } from '@tiptap/extension-table-cell';
+import { TableHeader } from '@tiptap/extension-table-header';
 import { CollapsibleNode } from '../extensions/CollapsibleNode';
 import { BookmarkMark } from '../extensions/BookmarkMark';
 import { CommentMark } from '../extensions/CommentMark';
 import { NoteLinkMark } from '../extensions/NoteLinkMark';
 import { SpoilerImage } from '../extensions/SpoilerImage';
+import { SpoilerText } from '../extensions/SpoilerText';
 import { Note, Tag, Notebook, Bookmark, CommentMessage, CommentThread, NoteVersion, StableLine } from '../types';
 import { reconcileLineStability } from '../store';
 import {
@@ -360,6 +365,7 @@ export default function Editor({
   const commentPopoverRef = useRef<HTMLElement>(null);
   const commentSaveGuard = useRef(false);
   const skipNextUpdate = useRef(false);
+  const imagePersistFrameRef = useRef<number | null>(null);
 
   const editor = useEditor({
     extensions: [
@@ -376,9 +382,14 @@ export default function Editor({
       TextAlign.configure({ types: ['heading', 'paragraph', 'blockquote'] }),
       Highlight.configure({ multicolor: true }),
       SpoilerImage.configure({ inline: false, allowBase64: true }),
+      Table.configure({ resizable: true }),
+      TableRow,
+      TableCell,
+      TableHeader,
       CollapsibleNode,
       BookmarkMark,
       CommentMark,
+      SpoilerText,
       ...(noteLinksEnabled ? [NoteLinkMark] : []),
     ],
     content: note.content,
@@ -415,7 +426,8 @@ export default function Editor({
   useEffect(() => {
     if (versionTimer.current) clearTimeout(versionTimer.current);
     if (editor && note.content !== editor.getHTML()) {
-      skipNextUpdate.current = true;
+      // setContent com emitUpdate=false não dispara onUpdate; não deixe o
+      // guard armado para consumir a próxima edição real do usuário.
       editor.commands.setContent(note.content, false);
     }
     lastVersionContent.current = note.content;
@@ -428,7 +440,8 @@ export default function Editor({
   // Sincroniza restaurações e atualizações externas sem iniciar um novo ciclo de versões.
   useEffect(() => {
     if (editor && note.content !== editor.getHTML()) {
-      skipNextUpdate.current = true;
+      // setContent com emitUpdate=false não dispara onUpdate; não deixe o
+      // guard armado para consumir a próxima edição real do usuário.
       editor.commands.setContent(note.content, false);
     }
     previousContentRef.current = note.content;
@@ -440,6 +453,23 @@ export default function Editor({
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => setSaved(false), 2000);
   }, []);
+
+  const persistImageDocument = useCallback(() => {
+    if (!editor) return;
+    const html = editor.getHTML();
+    previousContentRef.current = html;
+    onUpdateNote(note.id, { content: html });
+    showSavedIndicator();
+  }, [editor, note.id, onUpdateNote, showSavedIndicator]);
+
+  // Mostra a alteração visual imediatamente e junta vários cliques de imagem em uma única gravação.
+  const queueImageDocumentPersist = useCallback(() => {
+    if (imagePersistFrameRef.current !== null) return;
+    imagePersistFrameRef.current = window.requestAnimationFrame(() => {
+      imagePersistFrameRef.current = null;
+      persistImageDocument();
+    });
+  }, [persistImageDocument]);
 
   const saveVersionIfChanged = useCallback((force = false) => {
     const currentContent = editor?.getHTML() ?? note.content;
@@ -464,8 +494,15 @@ export default function Editor({
   useEffect(() => {
     return () => {
       if (versionTimer.current) clearTimeout(versionTimer.current);
+      if (imagePersistFrameRef.current !== null) {
+        window.cancelAnimationFrame(imagePersistFrameRef.current);
+        imagePersistFrameRef.current = null;
+        // A alteração da imagem suprimiu o onUpdate normal; grave-a antes de
+        // desmontar ou trocar de nota para que ela não seja perdida.
+        persistImageDocument();
+      }
     };
-  }, []);
+  }, [persistImageDocument]);
 
   const handleTitleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     currentTitleRef.current = e.target.value;
@@ -703,34 +740,36 @@ export default function Editor({
   const toggleImageSpoiler = useCallback((pos: number, spoiler: boolean) => {
     if (!editor) return;
     const node = editor.state.doc.nodeAt(pos);
-    if (!node || node.type.name !== 'image') return;
+    if (!node || node.type.name !== 'image' || (node.attrs['data-spoiler'] === 'true') === spoiler) return;
     skipNextUpdate.current = true;
     const tr = editor.state.tr.setNodeMarkup(pos, undefined, {
       ...node.attrs,
       'data-spoiler': spoiler ? 'true' : 'false',
     });
     editor.view.dispatch(tr);
-    const html = editor.getHTML();
-    onUpdateNote(note.id, { content: html });
-    showSavedIndicator();
+    queueImageDocumentPersist();
     setImageContextMenu(null);
-  }, [editor, note.id, onUpdateNote, showSavedIndicator]);
+  }, [editor, queueImageDocumentPersist]);
 
   const hideAllImages = useCallback(() => {
     if (!editor) return;
-    skipNextUpdate.current = true;
+    let changed = false;
     let tr = editor.state.tr;
     editor.state.doc.descendants((node, pos) => {
       if (node.type.name === 'image' && node.attrs['data-spoiler'] !== 'true') {
+        changed = true;
         tr = tr.setNodeMarkup(pos, undefined, { ...node.attrs, 'data-spoiler': 'true' });
       }
     });
+    if (!changed) {
+      setImageContextMenu(null);
+      return;
+    }
+    skipNextUpdate.current = true;
     editor.view.dispatch(tr);
-    const html = editor.getHTML();
-    onUpdateNote(note.id, { content: html });
-    showSavedIndicator();
+    queueImageDocumentPersist();
     setImageContextMenu(null);
-  }, [editor, note.id, onUpdateNote, showSavedIndicator]);
+  }, [editor, queueImageDocumentPersist]);
 
   useEffect(() => {
     const container = editorContentRef.current;

@@ -36,7 +36,8 @@ interface Props {
   tasks: Task[];
   notes: Note[];
   notebooks: Notebook[];
-  onCreateTask: (task: Omit<Task, 'id' | 'createdAt' | 'completedAt' | 'status' | 'reminderFired'>) => void;
+  defaultCalendarSyncEnabled: boolean;
+  onCreateTask: (task: Omit<Task, 'id' | 'createdAt' | 'updatedAt' | 'completedAt' | 'status' | 'reminderFired' | 'calendarId' | 'calendarEventId' | 'calendarEtag' | 'calendarLastSyncedAt' | 'calendarRemoteDeletedAt' | 'calendarSyncState'>) => void;
   onUpdateTask: (id: string, updates: Partial<Task>) => void;
   onDeleteTask: (id: string) => void;
   onToggleTask: (id: string) => void;
@@ -48,6 +49,7 @@ export default function Tasks({
   tasks,
   notes,
   notebooks,
+  defaultCalendarSyncEnabled,
   onCreateTask,
   onUpdateTask,
   onDeleteTask,
@@ -83,6 +85,7 @@ export default function Tasks({
   const [formReminderMinutes, setFormReminderMinutes] = useState<number | null>(30);
   const [formReminderSound, setFormReminderSound] = useState('bell');
   const [formReminderEnabled, setFormReminderEnabled] = useState(true);
+  const [formCalendarSyncEnabled, setFormCalendarSyncEnabled] = useState(defaultCalendarSyncEnabled);
   const [formRecurrence, setFormRecurrence] = useState<import('../types').RecurrenceType>('none');
   const [formRecurrenceInterval, setFormRecurrenceInterval] = useState(1);
   const [formError, setFormError] = useState('');
@@ -98,6 +101,7 @@ export default function Tasks({
     setFormReminderMinutes(30);
     setFormReminderSound('bell');
     setFormReminderEnabled(true);
+    setFormCalendarSyncEnabled(defaultCalendarSyncEnabled);
     setFormRecurrence('none');
     setFormRecurrenceInterval(1);
     setFormError('');
@@ -118,6 +122,7 @@ export default function Tasks({
       noteId: formNoteId,
       reminderMinutes: formReminderEnabled ? (formReminderMinutes ?? 0) : null,
       reminderSound: formReminderSound,
+      calendarSyncEnabled: formReminderEnabled && formCalendarSyncEnabled,
       recurrence: formRecurrence,
       recurrenceInterval: formRecurrenceInterval,
     });
@@ -135,6 +140,7 @@ export default function Tasks({
     setFormPriority(task.priority);
     setFormNoteId(task.noteId);
     setFormReminderEnabled(task.reminderMinutes !== null);
+    setFormCalendarSyncEnabled(task.calendarSyncEnabled === true);
     setFormReminderMinutes(task.reminderMinutes ?? 30);
     setFormReminderSound(task.reminderSound || 'bell');
     setFormRecurrence(task.recurrence || 'none');
@@ -156,6 +162,7 @@ export default function Tasks({
       reminderMinutes: formReminderEnabled ? (formReminderMinutes ?? 0) : null,
       reminderSound: formReminderSound,
       reminderFired: false,
+      calendarSyncEnabled: formReminderEnabled && formCalendarSyncEnabled,
       recurrence: formRecurrence,
       recurrenceInterval: formRecurrenceInterval,
     });
@@ -381,6 +388,19 @@ export default function Tasks({
               </button>
             )}
           </div>
+          {formReminderEnabled && (
+            <label className="settings-toggle-row task-calendar-sync-toggle">
+              <div>
+                <strong>Sincronizar este lembrete com Google Calendar</strong>
+                <span>Você poderá alterar esta escolha a qualquer momento.</span>
+              </div>
+              <input
+                type="checkbox"
+                checked={formCalendarSyncEnabled}
+                onChange={(event) => setFormCalendarSyncEnabled(event.target.checked)}
+              />
+            </label>
+          )}
         </div>
 
         <div className="task-form-field">

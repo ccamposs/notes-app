@@ -5,6 +5,7 @@ const { autoUpdater } = require('electron-updater');
 const { startLocalSyncServer } = require('./sync-server.cjs');
 const { startWebServer } = require('./web-server.cjs');
 const dataPersistence = require('./data-persistence.cjs');
+const { createGoogleCalendarService } = require('./google-calendar.cjs');
 
 // Disable hardware acceleration issues on some systems
 app.disableHardwareAcceleration();
@@ -14,7 +15,10 @@ let tray = null;
 let localSyncServer = null;
 let localWebServer = null;
 let updateCheckInterval = null;
+let googleCalendarService = null;
 let isQuitting = false;
+let shutdownInProgress = false;
+let rendererFlushComplete = null;
 
 // Baixa atualizações automaticamente; a instalação só ocorre quando o usuário
 // reinicia pelo aviso ou ao encerrar o aplicativo.
@@ -223,6 +227,22 @@ ipcMain.handle('disk-restore-backup', (_, backupPath) => {
   }
 });
 
+// ===== Google Calendar =====
+
+function calendarService() {
+  if (!googleCalendarService) {
+    googleCalendarService = createGoogleCalendarService(app.getPath('userData'));
+  }
+  return googleCalendarService;
+}
+
+ipcMain.handle('google-calendar-status', () => calendarService().getStatus());
+ipcMain.handle('google-calendar-connect', (_, clientId) => calendarService().connect(clientId));
+ipcMain.handle('google-calendar-disconnect', () => calendarService().disconnect());
+ipcMain.handle('google-calendar-list-calendars', () => calendarService().listCalendars());
+ipcMain.handle('google-calendar-sync', (_, tasks, calendarId, syncAllActiveTasks) => calendarService().sync(tasks, calendarId, syncAllActiveTasks === true));
+ipcMain.handle('google-calendar-delete-event', (_, calendarId, eventId, etag) => calendarService().deleteEvent(calendarId, eventId, etag));
+
 // ===== Autostart (iniciar com Windows) =====
 
 ipcMain.handle('get-autostart', () => {
@@ -291,11 +311,31 @@ function createTray() {
   });
 }
 
+function requestRendererFlush() {
+  if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) return Promise.resolve(true);
+
+  return new Promise((resolve) => {
+    const timeout = setTimeout(() => {
+      rendererFlushComplete = null;
+      resolve(false);
+    }, 5000);
+    rendererFlushComplete = () => {
+      clearTimeout(timeout);
+      rendererFlushComplete = null;
+      resolve(true);
+    };
+    mainWindow.webContents.send('flush-before-quit');
+  });
+}
+
+ipcMain.on('flush-before-quit-complete', () => rendererFlushComplete?.());
+
 // ===== App lifecycle =====
 app.whenReady().then(async () => {
   // Inicializa persistência segura em disco
   dataPersistence.init(app.getPath('userData'));
   dataPersistence.startBackupTimer();
+  googleCalendarService = createGoogleCalendarService(app.getPath('userData'));
 
   try {
     localSyncServer = await startLocalSyncServer(app.getPath('userData'));
@@ -318,12 +358,31 @@ app.whenReady().then(async () => {
   createWindow();
 });
 
-app.on('before-quit', () => {
+app.on('before-quit', (event) => {
+  if (shutdownInProgress) return;
+
+  // As gravações agora são assíncronas. Impede a saída uma vez para drenar
+  // persistência, snapshot e backup antes de encerrar definitivamente.
+  event.preventDefault();
   isQuitting = true;
+  shutdownInProgress = true;
   if (updateCheckInterval) clearInterval(updateCheckInterval);
-  dataPersistence.stopAndFinalBackup();
-  if (localSyncServer) localSyncServer.stop();
-  if (localWebServer) localWebServer.stop();
+
+  requestRendererFlush()
+    .then((flushed) => {
+      if (!flushed) throw new Error('O renderer não confirmou a gravação final. O aplicativo permanecerá aberto para proteger os dados.');
+      return Promise.all([
+        dataPersistence.stopAndFinalBackup(),
+        localSyncServer?.stop(),
+        localWebServer?.stop(),
+      ]);
+    })
+    .then(() => app.quit())
+    .catch((error) => {
+      shutdownInProgress = false;
+      isQuitting = false;
+      console.error('Falha ao finalizar a persistência:', error);
+    });
 });
 
 app.on('window-all-closed', () => {

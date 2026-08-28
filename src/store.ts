@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from 'uuid';
-import { Note, Notebook, Tag, AppState, NoteVersion, Bookmark, DashboardData, DashboardWidgetId, DashboardWidgetSize, StableLine } from './types';
+import { Note, Notebook, Tag, ImageTag, AppState, NoteVersion, Bookmark, DashboardData, DashboardWidgetId, DashboardWidgetSize, StableLine, AccessLogEntry } from './types';
 import { readState, writeState, readLegacyState, markLegacyMigrated } from './storage';
 
 const STORAGE_KEY = 'notes-app-data';
@@ -82,13 +82,25 @@ const defaultState: AppState = {
   notes: [],
   notebooks: [],
   tags: [],
+  imageTags: [],
   tasks: [],
+  accessLog: [],
   settings: {
     theme: 'dark',
+    customTheme: null,
     newNoteLocation: 'current-notebook',
     remindersEnabled: true,
     desktopNotifications: true,
     soundNotifications: true,
+    reminderPopupEnabled: false,
+    googleCalendarEnabled: false,
+    googleCalendarId: 'primary',
+    googleCalendarClientId: '',
+    googleCalendarSyncAllActiveTasks: false,
+    googleCalendarSyncNewTasks: false,
+    fontFamily: 'Inter, system-ui, sans-serif',
+    fontSize: 14,
+    trashRetentionDays: 30,
     searchPreviewEnabled: true,
     templatesEnabled: true,
     dragDropEnabled: true,
@@ -243,6 +255,14 @@ function migrateRawState(parsed: any): AppState {
           descriptionAlignment: t.descriptionAlignment || 'left',
           recurrence: t.recurrence || 'none',
           recurrenceInterval: t.recurrenceInterval || 1,
+          updatedAt: typeof t.updatedAt === 'string' ? t.updatedAt : (typeof t.createdAt === 'string' ? t.createdAt : new Date().toISOString()),
+          calendarSyncEnabled: t.calendarSyncEnabled === true,
+          calendarId: typeof t.calendarId === 'string' ? t.calendarId : null,
+          calendarEventId: typeof t.calendarEventId === 'string' ? t.calendarEventId : null,
+          calendarEtag: typeof t.calendarEtag === 'string' ? t.calendarEtag : null,
+          calendarLastSyncedAt: typeof t.calendarLastSyncedAt === 'string' ? t.calendarLastSyncedAt : null,
+          calendarRemoteDeletedAt: typeof t.calendarRemoteDeletedAt === 'string' ? t.calendarRemoteDeletedAt : null,
+          calendarSyncState: ['synced', 'remote-deleted', 'error'].includes(t.calendarSyncState) ? t.calendarSyncState : 'idle',
         }));
       }
       if (!parsed.dashboard) {
@@ -259,7 +279,9 @@ function migrateRawState(parsed: any): AppState {
       // Garantir que notebooks e tags existam como arrays
       if (!Array.isArray(parsed.notebooks)) parsed.notebooks = [];
       if (!Array.isArray(parsed.tags)) parsed.tags = [];
+      if (!Array.isArray(parsed.imageTags)) parsed.imageTags = [];
       if (!Array.isArray(parsed.tasks)) parsed.tasks = [];
+      if (!Array.isArray(parsed.accessLog)) parsed.accessLog = [];
       const migratedState = { ...defaultState, ...parsed };
       if (shouldResetHistory) localStorage.setItem(HISTORY_RESET_MARKER_KEY, '1');
       return migratedState;
@@ -305,7 +327,9 @@ function serializeState(state: AppState) {
     notes: state.notes,
     notebooks: state.notebooks,
     tags: state.tags,
+    imageTags: state.imageTags,
     tasks: state.tasks,
+    accessLog: state.accessLog,
     settings: state.settings,
     dashboard: state.dashboard,
     selectedNoteId: state.selectedNoteId,
@@ -339,6 +363,7 @@ export function createNote(notebookId: string | null = null): Note {
     content: '',
     createdAt: now,
     updatedAt: now,
+    deletedAt: null,
     status: 'active',
     isFavorite: false,
     notebookId,
@@ -347,6 +372,10 @@ export function createNote(notebookId: string | null = null): Note {
     lineStability: [],
     bookmarks: [],
     commentThreads: [],
+    audioClips: [],
+    isLocked: false,
+    lockPasswordHash: '',
+    lockHint: '',
   };
 }
 
@@ -446,6 +475,11 @@ export function createNotebook(name: string, order: number): Notebook {
     name,
     createdAt: new Date().toISOString(),
     order,
+    icon: '📓',
+    parentId: null,
+    isLocked: false,
+    lockPasswordHash: '',
+    lockHint: '',
   };
 }
 

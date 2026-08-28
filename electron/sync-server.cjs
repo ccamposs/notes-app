@@ -42,6 +42,12 @@ function startLocalSyncServer(userDataPath) {
 
     // Ler snapshot existente do disco
     let currentSnapshot = null;
+    let snapshotWriteInProgress = false;
+    let snapshotWritePromise = null;
+    let pendingSnapshotWrite = null;
+    let snapshotRetryTimer = null;
+    let snapshotRetryDelay = 1000;
+    let shuttingDown = false;
     try {
       if (fs.existsSync(snapshotPath)) {
         const raw = fs.readFileSync(snapshotPath, 'utf-8');
@@ -54,15 +60,106 @@ function startLocalSyncServer(userDataPath) {
       console.error('Erro ao ler snapshot de sincronização:', error.message);
     }
 
+    async function writeSnapshot(snapshot) {
+      // Devolve o controle ao loop do Electron antes de serializar snapshots
+      // grandes, para que o ACK não dispute o mesmo instante da interface.
+      await new Promise((resolve) => setImmediate(resolve));
+      const tmpPath = `${snapshotPath}.tmp`;
+      await fs.promises.writeFile(tmpPath, JSON.stringify(snapshot), 'utf-8');
+      await fs.promises.rename(tmpPath, snapshotPath);
+    }
+
+    function scheduleSnapshotRetry() {
+      if (shuttingDown || snapshotRetryTimer !== null) return;
+      const delay = snapshotRetryDelay;
+      snapshotRetryDelay = Math.min(snapshotRetryDelay * 2, 30000);
+      snapshotRetryTimer = setTimeout(() => {
+        snapshotRetryTimer = null;
+        queueSnapshotWrite();
+      }, delay);
+    }
+
+    function queueSnapshotWrite(data) {
+      let persisted = Promise.resolve();
+      if (data) {
+        persisted = new Promise((resolve, reject) => {
+          if (pendingSnapshotWrite) {
+            // Enquanto há escrita em curso ou retry, só a versão mais nova
+            // precisa chegar ao disco; todos os remetentes aguardam esse flush.
+            pendingSnapshotWrite.snapshot = data;
+            pendingSnapshotWrite.waiters.push({ resolve, reject });
+          } else {
+            pendingSnapshotWrite = { snapshot: data, waiters: [{ resolve, reject }] };
+          }
+        });
+      }
+      if (shuttingDown || snapshotWriteInProgress || snapshotRetryTimer !== null || !pendingSnapshotWrite) return persisted;
+
+      const flush = async () => {
+        snapshotWriteInProgress = true;
+        try {
+          while (pendingSnapshotWrite) {
+            const pending = pendingSnapshotWrite;
+            pendingSnapshotWrite = null;
+            try {
+              await writeSnapshot(pending.snapshot);
+              snapshotRetryDelay = 1000;
+              // Se uma versão mais nova chegou durante a escrita, não envie a
+              // anterior: seus remetentes aguardam o próximo snapshot final.
+              if (pendingSnapshotWrite) {
+                pendingSnapshotWrite.waiters.unshift(...pending.waiters);
+                continue;
+              }
+              for (const waiter of pending.waiters) waiter.resolve(pending.snapshot);
+            } catch (error) {
+              console.error('Erro ao gravar snapshot de sincronização:', error.message);
+              // Uma versão mais nova recebida durante a falha tem prioridade,
+              // mas os remetentes antigos continuam aguardando a gravação dela.
+              if (pendingSnapshotWrite) {
+                pendingSnapshotWrite.waiters.unshift(...pending.waiters);
+              } else {
+                pendingSnapshotWrite = pending;
+              }
+              scheduleSnapshotRetry();
+              break;
+            }
+          }
+        } finally {
+          snapshotWriteInProgress = false;
+          snapshotWritePromise = null;
+          if (pendingSnapshotWrite && !shuttingDown && snapshotRetryTimer === null) queueSnapshotWrite();
+        }
+      };
+
+      snapshotWritePromise = flush();
+      void snapshotWritePromise;
+      return persisted;
+    }
+
+    async function flushPendingSnapshotOnStop() {
+      shuttingDown = true;
+      if (snapshotRetryTimer !== null) {
+        clearTimeout(snapshotRetryTimer);
+        snapshotRetryTimer = null;
+      }
+      if (snapshotWritePromise) await snapshotWritePromise;
+      if (!pendingSnapshotWrite) return;
+
+      const pending = pendingSnapshotWrite;
+      pendingSnapshotWrite = null;
+      try {
+        await writeSnapshot(pending.snapshot);
+        for (const waiter of pending.waiters) waiter.resolve(pending.snapshot);
+      } catch (error) {
+        console.error('Erro ao finalizar snapshot de sincronização:', error.message);
+        for (const waiter of pending.waiters) waiter.reject(error);
+      }
+    }
+
     function saveSnapshotToDisk(state, updatedAt, sourceClientId) {
       const data = { state, updatedAt, sourceClientId };
-      try {
-        fs.writeFileSync(snapshotPath, JSON.stringify(data), 'utf-8');
-      } catch (error) {
-        console.error('Erro ao gravar snapshot de sincronização:', error.message);
-      }
       currentSnapshot = data;
-      return data;
+      return { data, persisted: queueSnapshotWrite(data) };
     }
 
     const server = http.createServer((request, response) => {
@@ -109,6 +206,7 @@ function startLocalSyncServer(userDataPath) {
 
     const webSocketServer = new WebSocketServer({ noServer: true, maxPayload: MAX_MESSAGE_BYTES });
     const clients = new Set();
+    let lastBroadcastedSnapshot = null;
 
     const broadcastSnapshot = (snapshot, excludeSocket) => {
       const message = JSON.stringify({ type: 'snapshot', ...snapshot });
@@ -117,6 +215,28 @@ function startLocalSyncServer(userDataPath) {
           client.send(message);
         }
       }
+    };
+
+    const confirmPersistedSnapshot = (socket, savedSnapshot) => {
+      void savedSnapshot.persisted
+        .then((persistedSnapshot) => {
+          const wasPersistedAsSent = persistedSnapshot.sourceClientId === savedSnapshot.data.sourceClientId
+            && persistedSnapshot.updatedAt === savedSnapshot.data.updatedAt;
+          if (wasPersistedAsSent) {
+            // O ACK leve continua evitando o retorno de Base64 ao remetente,
+            // mas agora só confirma a sincronização depois da gravação atômica.
+            send(socket, { type: 'ack', updatedAt: persistedSnapshot.updatedAt });
+          } else {
+            // A fila coalesceu uma atualização mais nova de outro cliente;
+            // devolva-a ao remetente em vez de confirmar um estado substituído.
+            send(socket, { type: 'snapshot', ...persistedSnapshot });
+          }
+          if (lastBroadcastedSnapshot !== persistedSnapshot) {
+            lastBroadcastedSnapshot = persistedSnapshot;
+            broadcastSnapshot(persistedSnapshot, socket);
+          }
+        })
+        .catch(() => send(socket, { type: 'error', message: 'Não foi possível persistir a sincronização.' }));
     };
 
     webSocketServer.on('connection', (socket) => {
@@ -164,8 +284,7 @@ function startLocalSyncServer(userDataPath) {
           } else if (message.state && isAppState(message.state)) {
             // Cliente tem dados mais recentes — salva e distribui
             const snapshot = saveSnapshotToDisk(message.state, updatedAt, message.clientId);
-            send(socket, { type: 'snapshot', state: snapshot.state, updatedAt: snapshot.updatedAt, sourceClientId: snapshot.sourceClientId });
-            broadcastSnapshot({ state: snapshot.state, updatedAt: snapshot.updatedAt, sourceClientId: snapshot.sourceClientId }, socket);
+            confirmPersistedSnapshot(socket, snapshot);
           } else if (currentSnapshot) {
             send(socket, {
               type: 'snapshot',
@@ -196,10 +315,7 @@ function startLocalSyncServer(userDataPath) {
         }
 
         const snapshot = saveSnapshotToDisk(message.state, updatedAt, message.clientId);
-        // Confirma ao remetente
-        send(socket, { type: 'snapshot', state: snapshot.state, updatedAt: snapshot.updatedAt, sourceClientId: snapshot.sourceClientId });
-        // Distribui para os demais
-        broadcastSnapshot({ state: snapshot.state, updatedAt: snapshot.updatedAt, sourceClientId: snapshot.sourceClientId }, socket);
+        confirmPersistedSnapshot(socket, snapshot);
       });
     });
 
@@ -222,11 +338,12 @@ function startLocalSyncServer(userDataPath) {
         host: SYNC_HOST,
         port: SYNC_PORT,
         snapshotPath,
-        stop: () => new Promise((stopResolve) => {
+        stop: async () => {
           for (const client of clients) client.close(1001, 'Servidor encerrado');
           webSocketServer.close();
-          server.close(() => stopResolve());
-        }),
+          await new Promise((stopResolve) => server.close(stopResolve));
+          await flushPendingSnapshotOnStop();
+        },
       });
     });
   });

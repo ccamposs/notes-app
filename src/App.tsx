@@ -65,7 +65,11 @@ export default function App() {
   const [showTemplates, setShowTemplates] = useState(false);
   const [galleryReturnView, setGalleryReturnView] = useState<{ viewMode: ViewMode; notebookId: string | null; noteId: string | null } | null>(null);
   const saveTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const saveInProgressRef = useRef(false);
+  const pendingSaveRef = useRef<AppState | null>(null);
+  const saveFlushPromiseRef = useRef<Promise<void> | null>(null);
   const syncClientRef = useRef<LocalSyncClient | null>(null);
+  const calendarSyncInProgressRef = useRef(false);
   const [syncStatus, setSyncStatus] = useState<SyncStatusData>({ phase: 'connecting', pendingChanges: 0, lastSyncedAt: 0 });
   const isRevertingRef = useRef(false);
 
@@ -142,20 +146,74 @@ export default function App() {
     return () => { cancelled = true; };
   }, []);
 
-  const safeSave = useCallback((s: AppState) => {
-    saveStateAsync(s)
-      .then(() => {
-        // Também salva em disco via Electron (dupla persistência)
-        if (window.electronAPI?.diskSaveState) {
-          const diskData = { notes: s.notes, notebooks: s.notebooks, tags: s.tags, tasks: s.tasks, settings: s.settings, dashboard: s.dashboard };
-          window.electronAPI.diskSaveState(diskData).catch((e) => console.error('Falha na persistência em disco:', e));
+  // Grava apenas a versão mais recente que ficou parada por 300 ms. Se o usuário
+  // continua editando, as versões intermediárias não geram cópias, IPC ou sync.
+  const safeSave = useCallback((nextState: AppState): Promise<void> => {
+    pendingSaveRef.current = nextState;
+    if (saveInProgressRef.current) return saveFlushPromiseRef.current ?? Promise.resolve();
+
+    const flushLatestState = async () => {
+      saveInProgressRef.current = true;
+      try {
+        while (pendingSaveRef.current) {
+          const stateToSave = pendingSaveRef.current;
+          pendingSaveRef.current = null;
+          await saveStateAsync(stateToSave);
+
+          // Uma alteração mais nova chegou durante o clone/gravação no IndexedDB.
+          // Ela substitui esta versão antes de enviar dados grandes ao Electron/WebSocket.
+          if (pendingSaveRef.current) continue;
+
+          if (window.electronAPI?.diskSaveState) {
+            const diskData = {
+              notes: stateToSave.notes,
+              notebooks: stateToSave.notebooks,
+              tags: stateToSave.tags,
+              tasks: stateToSave.tasks,
+              settings: stateToSave.settings,
+              dashboard: stateToSave.dashboard,
+            };
+            const diskResult = await window.electronAPI.diskSaveState(diskData);
+            if (!diskResult.success) console.error('Falha na persistência em disco:', diskResult.error);
+          }
+          syncClientRef.current?.saveLocalChange(stateToSave);
         }
-        syncClientRef.current?.saveLocalChange(s);
-      })
-      .catch((e) => {
-        console.error('Não foi possível gravar o estado:', e);
-      });
+      } catch (error) {
+        console.error('Não foi possível gravar o estado:', error);
+      } finally {
+        saveInProgressRef.current = false;
+        // Garante uma nova passagem caso uma alteração chegue exatamente ao finalizar a fila.
+        if (pendingSaveRef.current) void safeSave(pendingSaveRef.current);
+      }
+    };
+
+    const flushPromise = flushLatestState();
+    saveFlushPromiseRef.current = flushPromise;
+    return flushPromise;
   }, []);
+
+  const flushPendingSaves = useCallback(async () => {
+    if (saveTimeout.current) {
+      clearTimeout(saveTimeout.current);
+      saveTimeout.current = null;
+    }
+    let observedFlush: Promise<void>;
+    do {
+      observedFlush = safeSave(stateRef.current);
+      await observedFlush;
+    } while (saveInProgressRef.current || pendingSaveRef.current !== null || observedFlush !== saveFlushPromiseRef.current);
+    await syncClientRef.current?.waitForPendingSync();
+  }, [safeSave]);
+
+  useEffect(() => {
+    const api = window.electronAPI;
+    if (!api?.onFlushBeforeQuit || !api.confirmFlushBeforeQuit) return;
+    return api.onFlushBeforeQuit(() => {
+      void flushPendingSaves()
+        .catch((error) => console.error('Não foi possível finalizar a gravação antes de sair:', error))
+        .finally(() => api.confirmFlushBeforeQuit?.());
+    });
+  }, [flushPendingSaves]);
 
   const persistState = useCallback((newState: AppState) => {
     stateRef.current = newState;
@@ -174,6 +232,52 @@ export default function App() {
       return newState;
     });
   }, [safeSave]);
+
+  const syncGoogleCalendar = useCallback(async () => {
+    const api = window.electronAPI;
+    const snapshot = stateRef.current;
+    const settings = snapshot.settings;
+    if (!api?.googleCalendarSync || !settings.googleCalendarEnabled || !settings.googleCalendarId) {
+      return { synced: false, conflicts: 0 };
+    }
+    if (calendarSyncInProgressRef.current) return { synced: false, conflicts: 0 };
+
+    calendarSyncInProgressRef.current = true;
+    const tasksAtStart = snapshot.tasks;
+    try {
+      const result = await api.googleCalendarSync(
+        tasksAtStart,
+        settings.googleCalendarId,
+        settings.googleCalendarSyncAllActiveTasks,
+      );
+      // Não aplica uma resposta antiga caso o usuário tenha alterado tarefas durante a sincronização.
+      if (stateRef.current.tasks !== tasksAtStart) return { synced: false, conflicts: result.conflicts.length };
+      if (JSON.stringify(tasksAtStart) !== JSON.stringify(result.tasks)) {
+        persistFn((current) => ({ ...current, tasks: result.tasks }));
+      }
+      return { synced: true, conflicts: result.conflicts.length };
+    } finally {
+      calendarSyncInProgressRef.current = false;
+    }
+  }, [persistFn]);
+
+  const calendarTaskSignature = state.tasks
+    .map((task) => `${task.id}:${task.updatedAt}:${task.calendarSyncEnabled}:${task.status}`)
+    .join('|');
+
+  useEffect(() => {
+    if (isLoading || !state.settings.googleCalendarEnabled || !window.electronAPI?.googleCalendarSync) return;
+    const firstSync = setTimeout(() => {
+      syncGoogleCalendar().catch((error) => console.error('Não foi possível sincronizar com o Google Calendar:', error));
+    }, 800);
+    const interval = setInterval(() => {
+      syncGoogleCalendar().catch((error) => console.error('Não foi possível atualizar as alterações do Google Calendar:', error));
+    }, 5 * 60 * 1000);
+    return () => {
+      clearTimeout(firstSync);
+      clearInterval(interval);
+    };
+  }, [isLoading, state.settings.googleCalendarEnabled, state.settings.googleCalendarId, state.settings.googleCalendarSyncAllActiveTasks, calendarTaskSignature, syncGoogleCalendar]);
 
   // O IndexedDB continua sendo o cache offline. Ao receber um snapshot remoto,
   // ele é salvo diretamente para não gerar uma nova operação de sincronização.
@@ -663,7 +767,7 @@ export default function App() {
         if (imported.notebook) {
           let nb = notebooks.find((n) => n.name.toLowerCase() === imported.notebook!.toLowerCase());
           if (!nb) {
-            nb = { id: genId(), name: imported.notebook, createdAt: now, order: notebooks.length };
+            nb = { id: genId(), name: imported.notebook, createdAt: now, order: notebooks.length, icon: '📓', parentId: null, isLocked: false, lockPasswordHash: '', lockHint: '' };
             notebooks = [...notebooks, nb];
           }
           notebookId = nb.id;
@@ -686,6 +790,7 @@ export default function App() {
           content: imported.content,
           createdAt: imported.createdAt,
           updatedAt: imported.updatedAt,
+          deletedAt: null,
           status: 'active',
           isFavorite: imported.isFavorite,
           notebookId,
@@ -694,6 +799,10 @@ export default function App() {
           lineStability: [],
           bookmarks: [],
           commentThreads: [],
+          audioClips: [],
+          isLocked: false,
+          lockPasswordHash: '',
+          lockHint: '',
         });
       }
 
@@ -931,15 +1040,22 @@ export default function App() {
   }, [handleSetCommentThreadResolved]);
 
   // Tasks handlers
-  const handleCreateTask = useCallback((taskData: Omit<Task, 'id' | 'createdAt' | 'completedAt' | 'status' | 'reminderFired'>) => {
+  const handleCreateTask = useCallback((taskData: Omit<Task, 'id' | 'createdAt' | 'updatedAt' | 'completedAt' | 'status' | 'reminderFired' | 'calendarId' | 'calendarEventId' | 'calendarEtag' | 'calendarLastSyncedAt' | 'calendarRemoteDeletedAt' | 'calendarSyncState'>) => {
     persistFn((s) => {
       const task: Task = {
         ...taskData,
         id: crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2),
         status: 'pending',
         createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
         completedAt: null,
         reminderFired: false,
+        calendarId: null,
+        calendarEventId: null,
+        calendarEtag: null,
+        calendarLastSyncedAt: null,
+        calendarRemoteDeletedAt: null,
+        calendarSyncState: 'idle',
       };
       return { ...s, tasks: [task, ...(s.tasks || [])] };
     });
@@ -948,11 +1064,18 @@ export default function App() {
   const handleUpdateTask = useCallback((id: string, updates: Partial<Task>) => {
     persistFn((s) => ({
       ...s,
-      tasks: (s.tasks || []).map((t) => t.id === id ? { ...t, ...updates } : t),
+      tasks: (s.tasks || []).map((t) => t.id === id
+        ? { ...t, ...updates, updatedAt: new Date().toISOString(), calendarRemoteDeletedAt: null, calendarSyncState: 'idle' }
+        : t),
     }));
   }, [persistFn]);
 
   const handleDeleteTask = useCallback((id: string) => {
+    const task = stateRef.current.tasks.find((candidate) => candidate.id === id);
+    if (task?.calendarEventId && window.electronAPI?.googleCalendarDeleteEvent) {
+      window.electronAPI.googleCalendarDeleteEvent(task.calendarId || stateRef.current.settings.googleCalendarId, task.calendarEventId, task.calendarEtag)
+        .catch((error) => console.error('Não foi possível remover o evento do Google Calendar:', error));
+    }
     persistFn((s) => ({
       ...s,
       tasks: (s.tasks || []).filter((t) => t.id !== id),
@@ -967,7 +1090,7 @@ export default function App() {
       const t = tasks[idx];
 
       if (t.status === 'pending') {
-        tasks[idx] = { ...t, status: 'completed' as const, completedAt: new Date().toISOString() };
+        tasks[idx] = { ...t, status: 'completed' as const, completedAt: new Date().toISOString(), updatedAt: new Date().toISOString(), calendarRemoteDeletedAt: null, calendarSyncState: 'idle' };
 
         // If recurrent, create next occurrence
         if (t.recurrence && t.recurrence !== 'none' && t.dueDate) {
@@ -978,13 +1101,20 @@ export default function App() {
             status: 'pending',
             dueDate: nextDate,
             createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
             completedAt: null,
             reminderFired: false,
+            calendarId: null,
+            calendarEventId: null,
+            calendarEtag: null,
+            calendarLastSyncedAt: null,
+            calendarRemoteDeletedAt: null,
+            calendarSyncState: 'idle',
           };
           tasks.unshift(newTask);
         }
       } else {
-        tasks[idx] = { ...t, status: 'pending' as const, completedAt: null };
+        tasks[idx] = { ...t, status: 'pending' as const, completedAt: null, reminderFired: false, updatedAt: new Date().toISOString(), calendarRemoteDeletedAt: null, calendarSyncState: 'idle' };
       }
 
       return { ...s, tasks };
@@ -1015,10 +1145,18 @@ export default function App() {
         id: taskId,
         status: 'pending',
         createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
         completedAt: null,
         reminderMinutes: data.reminderMinutes,
         reminderSound: data.reminderSound,
         reminderFired: false,
+        calendarSyncEnabled: s.settings.googleCalendarSyncNewTasks,
+        calendarId: null,
+        calendarEventId: null,
+        calendarEtag: null,
+        calendarLastSyncedAt: null,
+        calendarRemoteDeletedAt: null,
+        calendarSyncState: 'idle',
         recurrence: data.recurrence,
         recurrenceInterval: data.recurrenceInterval,
       };
@@ -1278,6 +1416,7 @@ export default function App() {
           tasks={state.tasks || []}
           notes={state.notes}
           notebooks={state.notebooks}
+          defaultCalendarSyncEnabled={state.settings.googleCalendarSyncNewTasks}
           onCreateTask={handleCreateTask}
           onUpdateTask={handleUpdateTask}
           onDeleteTask={handleDeleteTask}
@@ -1286,7 +1425,14 @@ export default function App() {
           onSelectNote={(id) => navigate((s) => ({ ...s, viewMode: 'all', selectedNoteId: id }))}
         />
       ) : showSettings ? (
-        <Settings settings={state.settings} onUpdateSettings={handleUpdateSettings} appState={state} onRestoreBackup={handleRestoreBackup} onImportNotes={handleImportNotes} />
+        <Settings
+          settings={state.settings}
+          onUpdateSettings={handleUpdateSettings}
+          appState={state}
+          onRestoreBackup={handleRestoreBackup}
+          onImportNotes={handleImportNotes}
+          onSyncCalendar={syncGoogleCalendar}
+        />
       ) : showGallery ? (
         <Gallery
           notes={state.notes}
@@ -1304,6 +1450,8 @@ export default function App() {
             tags={state.tags}
             searchQuery={state.searchQuery}
             searchPreviewEnabled={state.settings.searchPreviewEnabled}
+            allNotes={state.notes}
+            onSearch={handleSearch}
             onSelectNote={handleSelectNote}
             onToggleFavorite={handleToggleFavorite}
             onDuplicateNote={handleDuplicateNote}

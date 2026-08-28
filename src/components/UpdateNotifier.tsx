@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Download, X, RefreshCw } from 'lucide-react';
+import type { Task } from '../types';
 
 declare global {
   interface Window {
@@ -16,8 +17,15 @@ declare global {
       diskLoadState: () => Promise<{ state: unknown; source: string }>;
       diskListBackups: () => Promise<{ file: string; path: string; size: number; date: string }[]>;
       diskRestoreBackup: (backupPath: string) => Promise<{ success: boolean; state?: unknown; error?: string }>;
-      getAutostart: () => Promise<boolean>;
+      onFlushBeforeQuit: (callback: () => void) => () => void;
+      confirmFlushBeforeQuit: () => void;      getAutostart: () => Promise<boolean>;
       setAutostart: (enabled: boolean) => Promise<boolean>;
+      googleCalendarStatus: () => Promise<{ available: boolean; connected: boolean; clientIdConfigured: boolean }>;
+      googleCalendarConnect: (clientId: string) => Promise<{ available: boolean; connected: boolean; clientIdConfigured: boolean }>;
+      googleCalendarDisconnect: () => Promise<{ available: boolean; connected: boolean; clientIdConfigured: boolean }>;
+      googleCalendarListCalendars: () => Promise<{ id: string; summary: string; primary: boolean }[]>;
+      googleCalendarSync: (tasks: Task[], calendarId: string, syncAllActiveTasks: boolean) => Promise<{ tasks: Task[]; conflicts: { taskId: string; type: 'deleted-remotely' }[]; syncedAt: string }>;
+      googleCalendarDeleteEvent: (calendarId: string, eventId: string, etag?: string | null) => Promise<{ success: boolean; error?: string }>;
       onUpdateStatus: (callback: (message: string) => void) => () => void;
       onUpdateDownloaded: (callback: (version: string) => void) => () => void;
     };

@@ -43,6 +43,7 @@ export interface Note {
   content: string;
   createdAt: string;
   updatedAt: string;
+  deletedAt: string | null;
   status: NoteStatus;
   isFavorite: boolean;
   notebookId: string | null;
@@ -51,6 +52,11 @@ export interface Note {
   lineStability: StableLine[];
   bookmarks: Bookmark[];
   commentThreads: CommentThread[];
+  audioClips: AudioClip[];
+  // Bloqueio por senha
+  isLocked: boolean;
+  lockPasswordHash: string;
+  lockHint: string;
 }
 
 export interface Notebook {
@@ -58,9 +64,21 @@ export interface Notebook {
   name: string;
   createdAt: string;
   order: number;
+  icon: string;
+  parentId: string | null;
+  // Bloqueio por senha
+  isLocked: boolean;
+  lockPasswordHash: string;
+  lockHint: string;
 }
 
 export interface Tag {
+  id: string;
+  name: string;
+  color: string;
+}
+
+export interface ImageTag {
   id: string;
   name: string;
   color: string;
@@ -73,15 +91,57 @@ export type TaskStatus = 'pending' | 'completed';
 
 export type RecurrenceType = 'none' | 'daily' | 'weekly' | 'monthly' | 'custom';
 export type TextAlignment = 'left' | 'center' | 'right';
-export type AppTheme = 'dark' | 'light';
+export type AppTheme = 'dark' | 'light' | 'custom';
 export type NewNoteLocation = 'current-notebook' | 'inbox';
+
+export interface AudioClip {
+  id: string;
+  dataUrl: string;
+  duration: number;
+  createdAt: string;
+}
+
+export interface AccessLogEntry {
+  id: string;
+  action: string;
+  targetType: 'note' | 'notebook' | 'image' | 'text';
+  targetId: string;
+  targetName: string;
+  timestamp: string;
+}
+
+export interface CustomTheme {
+  id: string;
+  name: string;
+  colors: {
+    bgPrimary: string;
+    bgSecondary: string;
+    textPrimary: string;
+    textSecondary: string;
+    accent: string;
+    border: string;
+  };
+}
 
 export interface AppSettings {
   theme: AppTheme;
+  customTheme: CustomTheme | null;
   newNoteLocation: NewNoteLocation;
   remindersEnabled: boolean;
   desktopNotifications: boolean;
   soundNotifications: boolean;
+  reminderPopupEnabled: boolean;
+  // Google Calendar (não contém credenciais)
+  googleCalendarEnabled: boolean;
+  googleCalendarId: string;
+  googleCalendarClientId: string;
+  googleCalendarSyncAllActiveTasks: boolean;
+  googleCalendarSyncNewTasks: boolean;
+  // Fonte e tamanho
+  fontFamily: string;
+  fontSize: number;
+  // Lixeira
+  trashRetentionDays: number;
   // Recursos adicionais (todos ativos por padrão)
   searchPreviewEnabled: boolean;
   templatesEnabled: boolean;
@@ -132,13 +192,24 @@ export interface Task {
   reminderFired: boolean;
   recurrence: RecurrenceType;
   recurrenceInterval: number;
+  // Vinculação opcional e não secreta ao Google Calendar
+  updatedAt: string;
+  calendarSyncEnabled: boolean;
+  calendarId: string | null;
+  calendarEventId: string | null;
+  calendarEtag: string | null;
+  calendarLastSyncedAt: string | null;
+  calendarRemoteDeletedAt: string | null;
+  calendarSyncState: 'idle' | 'synced' | 'remote-deleted' | 'error';
 }
 
 export interface AppState {
   notes: Note[];
   notebooks: Notebook[];
   tags: Tag[];
+  imageTags: ImageTag[];
   tasks: Task[];
+  accessLog: AccessLogEntry[];
   settings: AppSettings;
   dashboard: DashboardData;
   selectedNoteId: string | null;

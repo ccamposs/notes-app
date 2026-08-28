@@ -21,6 +21,8 @@ const BACKUPS_DIR = 'backups';
 let userDataPath = '';
 let backupTimer = null;
 let lastSavedHash = '';
+// Um único escritor protege os arquivos .tmp contra gravações IPC concorrentes.
+let saveQueue = Promise.resolve();
 
 function init(dataPath) {
   userDataPath = dataPath;
@@ -75,6 +77,14 @@ function hasContent(data) {
  * Retorna { success, error? }
  */
 function saveState(state) {
+  // Serializa a operação inteira (principal + cópia) para que duas chamadas
+  // nunca disputem o mesmo arquivo temporário nem invertam a ordem dos dados.
+  const operation = saveQueue.then(() => saveStateSafely(state));
+  saveQueue = operation.catch(() => undefined);
+  return operation;
+}
+
+async function saveStateSafely(state) {
   if (!userDataPath) return { success: false, error: 'Persistência não inicializada.' };
 
   const json = JSON.stringify(state, null, 2);
@@ -94,13 +104,13 @@ function saveState(state) {
   if (hash === lastSavedHash) return { success: true };
 
   // Grava no arquivo principal
-  const mainResult = writeAndVerify(getDataPath(), json, hash);
+  const mainResult = await writeAndVerify(getDataPath(), json, hash);
   if (!mainResult.success) {
     return { success: false, error: `Falha no arquivo principal: ${mainResult.error}` };
   }
 
   // Grava a cópia de segurança
-  const copyResult = writeAndVerify(getCopyPath(), json, hash);
+  const copyResult = await writeAndVerify(getCopyPath(), json, hash);
   if (!copyResult.success) {
     console.error('[Persistência] Cópia de segurança falhou:', copyResult.error);
     // Não falha a operação — o principal foi salvo com sucesso
@@ -113,23 +123,23 @@ function saveState(state) {
 /**
  * Grava e relê para verificar integridade.
  */
-function writeAndVerify(filePath, content, expectedHash) {
+async function writeAndVerify(filePath, content, expectedHash) {
   try {
-    // Grava com .tmp primeiro para não corromper o arquivo original em caso de falha
+    // Grava com .tmp primeiro para não corromper o arquivo original em caso de falha.
     const tmpPath = filePath + '.tmp';
-    fs.writeFileSync(tmpPath, content, 'utf-8');
+    await fs.promises.writeFile(tmpPath, content, 'utf-8');
 
-    // Relê e verifica
-    const verification = fs.readFileSync(tmpPath, 'utf-8');
+    // A verificação é feita fora do caminho síncrono do processo principal.
+    const verification = await fs.promises.readFile(tmpPath, 'utf-8');
     const verifyHash = computeHash(verification);
 
     if (verifyHash !== expectedHash) {
-      fs.unlinkSync(tmpPath);
+      await fs.promises.unlink(tmpPath).catch(() => undefined);
       return { success: false, error: 'Hash não confere após gravação.' };
     }
 
-    // Renomeia atomicamente (substitui o original)
-    fs.renameSync(tmpPath, filePath);
+    // Renomeia atomicamente (substitui o original).
+    await fs.promises.rename(tmpPath, filePath);
     return { success: true };
   } catch (error) {
     return { success: false, error: error.message };
@@ -265,13 +275,22 @@ function startBackupTimer() {
 }
 
 /**
- * Para o timer e cria um backup final ao fechar.
+ * Para o timer, espera as gravações enfileiradas e cria um backup final ao fechar.
  */
-function stopAndFinalBackup() {
+async function stopAndFinalBackup() {
   if (backupTimer) {
     clearInterval(backupTimer);
     backupTimer = null;
   }
+
+  // Uma nova chamada pode entrar enquanto aguardamos; só prossiga quando a
+  // cadeia estabilizar, para que o backup reflita a última gravação em disco.
+  let observedQueue;
+  do {
+    observedQueue = saveQueue;
+    await observedQueue;
+  } while (observedQueue !== saveQueue);
+
   createRotativeBackup();
 }
 
