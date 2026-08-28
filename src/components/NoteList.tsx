@@ -1,7 +1,8 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Note, Tag, ViewMode } from '../types';
 import { Star, FileText, Download, Filter, CheckSquare2, X, Pin, Copy, Sparkles, SortAsc, GripVertical, MessageSquare } from 'lucide-react';
 import { stripHtml } from '../store';
+import { getSuggestion, SearchSuggestion } from '../searchCorrection';
 
 function getSearchSnippet(html: string, query: string): React.ReactNode {
   const text = html.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/\s+/g, ' ').trim();
@@ -34,6 +35,8 @@ interface Props {
   tags: Tag[];
   searchQuery?: string;
   searchPreviewEnabled?: boolean;
+  allNotes?: Note[];
+  onSearch?: (query: string) => void;
   onSelectNote: (id: string) => void;
   onToggleFavorite: (id: string) => void;
   onDuplicateNote: (id: string) => void;
@@ -59,6 +62,20 @@ const viewTitles: Record<ViewMode, string> = {
   gallery: 'Galeria',
 };
 
+function SearchSuggestionBanner({ query, allNotes, onSearch }: { query: string; allNotes: Note[]; onSearch: (q: string) => void }) {
+  const suggestion = useMemo(() => getSuggestion(query, allNotes), [query, allNotes]);
+  if (!suggestion) return null;
+  return (
+    <div className="search-suggestion">
+      <span>Você quis dizer </span>
+      <button className="search-suggestion-link" onClick={() => onSearch(suggestion.corrected)}>
+        {suggestion.corrected}
+      </button>
+      <span>?</span>
+    </div>
+  );
+}
+
 export default function NoteList({
   notes,
   selectedNoteId,
@@ -66,6 +83,8 @@ export default function NoteList({
   tags,
   searchQuery = '',
   searchPreviewEnabled = true,
+  allNotes = [],
+  onSearch,
   onSelectNote,
   onToggleFavorite,
   onDuplicateNote,
@@ -324,6 +343,9 @@ export default function NoteList({
             <FileText className="empty-state-icon" />
             <h3>Nenhuma nota</h3>
             <p>Crie uma nova nota para começar</p>
+            {viewMode === 'search' && searchQuery && onSearch && (
+              <SearchSuggestionBanner query={searchQuery} allNotes={allNotes} onSearch={onSearch} />
+            )}
           </div>
         ) : (
           filteredAndSorted.map((note) => {
